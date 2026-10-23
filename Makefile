@@ -4,6 +4,10 @@
 # Rootful build instead:  make package THEOS_PACKAGE_SCHEME=
 THEOS_PACKAGE_SCHEME ?= rootless
 
+# Do not turn compiler warnings into build failures.
+# MUST stay above the 'include .../common.mk' line: it is read while that file loads.
+GO_EASY_ON_ME = 1
+
 # bluetoothd is an arm64e binary: without an arm64e slice this dylib builds fine and never loads.
 # iOS 15 is the deployment target Theos recommends for rootless (theos.dev/docs/rootless).
 ARCHS  := arm64 arm64e
