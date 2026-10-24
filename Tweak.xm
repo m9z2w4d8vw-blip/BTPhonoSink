@@ -20,6 +20,14 @@
  * Why the old version could not work: every offset in the first analysis pointed one instruction past the
  * function's `pacibsp`. On arm64e that makes the hook's return address double-signed, so the first call crashes.
  * The table in BTPSBuild.h was regenerated from the binary and each entry checked against its own log message.
+ *
+ * v3 fix: AVDTP_RegisterMultipoint's own debug line - "AVDTP_RegisterMultipoint(mediaType=%d,count=%d,
+ * endpointType=%d,caps=0x%x,numCaps=%d)" - prints its five arguments in a different order than the registers
+ * that hold them. Tracing the real prologue shows the true mapping is a0=mediaType, a1=endpointType,
+ * a2=caps (the pointer), a3=numCaps, a4=count. v2 assumed the print order was the register order and read
+ * a3 as caps and a2 as endpointType; that's why the log said "caps value 0x3 is not a readable pointer"
+ * (0x3 is numCaps, not caps) and why the experiment's Source/Sink check and substitution were on the wrong
+ * register entirely.
  */
 #include <CoreFoundation/CoreFoundation.h>
 #include <mach-o/dyld.h>
@@ -35,7 +43,7 @@
 #include "BTPSLog.h"
 #include "BTPSShared.h"
 
-#define BTPS_BUILD_TAG "observe-only v2"
+#define BTPS_BUILD_TAG "observe-only v3"
 
 /* AVDTP constants, used only by the experiment */
 #define BTPS_AVDTP_TSEP_SRC 0u
@@ -156,29 +164,43 @@ BTPS_OBSERVER(hook_setconfigind,  BTPS_H_SETCONFIGIND)    /* a remote device con
 BTPS_OBSERVER(hook_accept_sbc,    BTPS_H_ACCEPT_SBC)      /* ... and chose SBC settings                            */
 BTPS_OBSERVER(hook_publish,       BTPS_H_PUBLISH)         /* an audio device was published to the audio system     */
 
-/* The registration function logs: AVDTP_RegisterMultipoint(mediaType, count, endpointType, caps, numCaps) */
+/* AVDTP_RegisterMultipoint(a0=mediaType, a1=endpointType, a2=caps [pointer], a3=numCaps, a4=count); a5 is a
+ * pointer the daemon's own log line does not print - not yet known what it's for. See the v3 note above for how
+ * this mapping was confirmed (it differs from the print order in that log line). */
 static uint64_t hook_register(uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3,
                               uint64_t a4, uint64_t a5, uint64_t a6, uint64_t a7)
 {
     note_call(BTPS_H_REGISTER, a0, a1, a2, a3, a4, a5);
     unsigned n = g_calls[BTPS_H_REGISTER];
 
-    /* Learn how Apple lays out the capability list: dump the memory `caps` points at (first few calls only). */
+    /* Learn how Apple lays out the capability list: dump the memory `caps` (a2) points at (first few calls only).
+     * Also watch a5: if the real call changes what it points to, that's a strong sign it's an out-parameter. */
+    uint64_t a5_before = 0;
+    int a5_readable = (n <= 6u) && btps_peek(a5, &a5_before, sizeof a5_before);
     if (n <= 6u) {
         uint8_t buf[96];
-        if (btps_peek(a3, buf, sizeof buf)) BTPSLogHexdump("caps", buf, sizeof buf);
-        else BTPSLog("caps value %#llx is not a readable pointer (it may be a handle or bitmask)", (unsigned long long)a3);
+        if (btps_peek(a2, buf, sizeof buf)) BTPSLogHexdump("caps", buf, sizeof buf);
+        else BTPSLog("caps value %#llx is not a readable pointer (it may be a handle or bitmask)", (unsigned long long)a2);
+        if (a5_readable) BTPSLog("arg5 %#llx currently holds %#llx (unknown purpose, watching for a change)",
+                                  (unsigned long long)a5, (unsigned long long)a5_before);
     }
 
     uint64_t r = g_orig[BTPS_H_REGISTER] ? g_orig[BTPS_H_REGISTER](a0, a1, a2, a3, a4, a5, a6, a7) : 0;
     note_return(BTPS_H_REGISTER, r);
 
+    if (a5_readable) {
+        uint64_t a5_after = 0;
+        if (btps_peek(a5, &a5_after, sizeof a5_after) && a5_after != a5_before)
+            BTPSLog("arg5 %#llx changed %#llx -> %#llx across the real call (looks like an out-param)",
+                    (unsigned long long)a5, (unsigned long long)a5_before, (unsigned long long)a5_after);
+    }
+
     /* EXPERIMENT (off unless switched on in Settings): mirror each audio SOURCE endpoint as a SINK endpoint with the
      * same capability list. Re-using Apple's own list avoids guessing the structure layout. */
     if (BTPSExperimentsEnabled() && g_orig[BTPS_H_REGISTER] &&
-        (uint32_t)a0 == BTPS_AVDTP_MEDIA_AUDIO && (uint32_t)a2 == BTPS_AVDTP_TSEP_SRC && (uint32_t)r == 0u) {
-        BTPSLogNow("EXPERIMENT: registering a SINK endpoint next to this SOURCE one (same caps %#llx)", (unsigned long long)a3);
-        uint64_t r2 = g_orig[BTPS_H_REGISTER](a0, a1, BTPS_AVDTP_TSEP_SNK, a3, a4, a5, a6, a7);
+        (uint32_t)a0 == BTPS_AVDTP_MEDIA_AUDIO && (uint32_t)a1 == BTPS_AVDTP_TSEP_SRC && (uint32_t)r == 0u) {
+        BTPSLogNow("EXPERIMENT: registering a SINK endpoint next to this SOURCE one (same caps %#llx)", (unsigned long long)a2);
+        uint64_t r2 = g_orig[BTPS_H_REGISTER](a0, BTPS_AVDTP_TSEP_SNK, a2, a3, a4, a5, a6, a7);
         BTPSLogNow("EXPERIMENT: sink registration returned %#llx", (unsigned long long)r2);
         BTPSSetStatus("experiment.sink_register", "returned %#llx", (unsigned long long)r2);
     }
