@@ -1,0 +1,238 @@
+# Build, test and publish BTPhonoSink.
+#
+#   push to any branch         -> build + package + verify
+#   push to main               -> ...and publish the .deb to the rolling "nightly" pre-release
+#   push of a tag like v0.2.0  -> ...and publish a versioned release
+#   Actions tab > Run workflow -> same as a push to the selected branch
+#
+# No secrets are needed: publishing uses the built-in GITHUB_TOKEN.
+# Why macOS: the iPhoneOS SDK ships inside Xcode, which only exists on the macOS runner image.
+name: build
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  # Never cancel runs on main or tags (they publish). Do cancel superseded runs on other branches.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  # ---------------------------------------------------------------------------------------------
+  # Compile for arm64 + arm64e, package as a rootless .deb, and assert the package is sane.
+  # ---------------------------------------------------------------------------------------------
+  build:
+    name: Build .deb (rootless, arm64 + arm64e)
+    runs-on: macos-15            # pinned on purpose; macos-latest is moving to macOS 26
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      HOMEBREW_NO_INSTALL_CLEANUP: '1'
+      HOMEBREW_NO_ENV_HINTS: '1'
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Select Xcode and show the iPhoneOS SDK
+        run: |
+          XCODE=/Applications/Xcode_16.4.app
+          if [ -d "$XCODE" ]; then
+            sudo xcode-select -s "$XCODE/Contents/Developer"
+          else
+            echo "::warning::$XCODE not found, using the image default"
+          fi
+          xcodebuild -version
+          echo "iPhoneOS SDK path   : $(xcrun --sdk iphoneos --show-sdk-path)"
+          echo "iPhoneOS SDK version: $(xcrun --sdk iphoneos --show-sdk-version)"
+
+      - name: Install build tools (GNU make, ldid, dpkg)
+        run: |
+          brew install make ldid dpkg xz
+          # Theos needs GNU make 4.x; macOS ships 3.81
+          echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
+
+      - name: Install Theos
+        run: |
+          git clone --quiet --recursive --depth=1 --shallow-submodules https://github.com/theos/theos.git "$HOME/theos"
+          echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
+
+      - name: Show toolchain
+        run: |
+          echo "THEOS=$THEOS"
+          make --version | sed -n '1p'
+          dpkg-deb --version | sed -n '1p'
+          echo "ldid   : $(command -v ldid)"
+          echo "clang  : $(xcrun --find clang)"
+
+      - name: Compute and stamp the package version
+        id: version
+        run: |
+          set -euo pipefail
+          base="$(sed -n 's/^Version:[[:space:]]*//p' control | sed -n '1p' | tr -d '\r[:space:]')"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"            # tag v0.2.0 -> 0.2.0
+          else
+            version="${base}.${GITHUB_RUN_NUMBER}"    # 0.1.0 -> 0.1.0.57  (always increasing)
+          fi
+          if ! [[ "$version" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+            echo "::error::version '$version' is not dotted-numeric (control says '$base', ref is ${GITHUB_REF})"
+            exit 1
+          fi
+          sed -i.bak "s/^Version:.*/Version: ${version}/" control
+          rm -f control.bak
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Package version: ${version}"
+
+      - name: v5 offline safety and SDP format tests
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Build and package
+        run: make clean package FINALPACKAGE=1
+
+      - name: Verify the package
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          debs=(packages/*.deb)
+          if [ "${#debs[@]}" -ne 1 ]; then
+            echo "::error::expected exactly one .deb in packages/, found ${#debs[@]}"
+            ls -la packages || true
+            exit 1
+          fi
+          deb="${debs[0]}"
+          echo "::group::control"; dpkg-deb -I "$deb"; echo "::endgroup::"
+          echo "::group::contents"; dpkg-deb -c "$deb"; echo "::endgroup::"
+
+          rm -rf pkgroot && mkdir pkgroot && dpkg-deb -x "$deb" pkgroot
+          dylib="$(find pkgroot -name 'BTPhonoSink.dylib' | sed -n '1p')"
+          plist="$(find pkgroot -name 'BTPhonoSink.plist' | sed -n '1p')"
+          [ -n "$dylib" ] || { echo "::error::BTPhonoSink.dylib is not in the package"; exit 1; }
+          [ -n "$plist" ] || { echo "::error::BTPhonoSink.plist (the injection filter) is not in the package"; exit 1; }
+
+          # 1. rootless layout: everything lives under /var/jb
+          case "$dylib" in
+            pkgroot/var/jb/Library/MobileSubstrate/DynamicLibraries/*) ;;
+            *) echo "::error::dylib is not under /var/jb/Library/MobileSubstrate/DynamicLibraries (found: $dylib)"; exit 1 ;;
+          esac
+          arch="$(dpkg-deb -f "$deb" Architecture)"
+          [ "$arch" = "iphoneos-arm64" ] || { echo "::error::Architecture is '$arch', expected iphoneos-arm64"; exit 1; }
+
+          # 2. both slices. bluetoothd is arm64e: without that slice the dylib compiles fine and never loads.
+          archs="$(lipo -archs "$dylib")"
+          echo "slices: $archs"
+          case " $archs " in *" arm64e "*) ;; *) echo "::error::no arm64e slice in the dylib"; exit 1 ;; esac
+          case " $archs " in *" arm64 "*) ;; *) echo "::warning::no plain arm64 slice" ;; esac
+
+          # 3. linkage: nothing may point at rootful paths
+          echo "::group::otool -L"; otool -L "$dylib"; echo "::endgroup::"
+          if otool -L "$dylib" | grep -E '/Library/Frameworks/CydiaSubstrate|/usr/lib/libsubstrate'; then
+            echo "::warning::dylib links libsubstrate by a rootful path; it may fail to load on a rootless jailbreak"
+          fi
+
+          # 4. code signature (Theos fake-signs with ldid; unsigned dylibs are refused by the kernel)
+          sigs="$(otool -l "$dylib" | grep -c LC_CODE_SIGNATURE || true)"
+          if [ "${sigs:-0}" -eq 0 ]; then
+            echo "::warning::no LC_CODE_SIGNATURE in the dylib"
+          fi
+
+          # 5. the injection filter must name bluetoothd, and must be a valid plist
+          grep -q bluetoothd "$plist" || { echo "::error::filter plist does not mention bluetoothd"; exit 1; }
+          plutil -lint "$plist" || echo "::warning::plutil could not lint the filter plist"
+
+          echo "Package OK: $(basename "$deb")  Version: $(dpkg-deb -f "$deb" Version)"
+
+      - name: Stage release assets
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp packages/*.deb dist/
+          ( cd dist && shasum -a 256 *.deb > SHA256SUMS && cat SHA256SUMS )
+          {
+            echo "### Build ${GITHUB_RUN_NUMBER}"
+            echo ""
+            echo "- Package: \`$(basename dist/*.deb)\`"
+            echo "- Version: \`$(dpkg-deb -f dist/*.deb Version)\`"
+            echo "- Commit: \`${GITHUB_SHA:0:7}\`"
+            echo "- Slices: \`$(lipo -archs "$(find pkgroot -name BTPhonoSink.dylib | sed -n '1p')")\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: BTPhonoSink-deb
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------------------------
+  # Publish. Only main and v* tags; only if the build job succeeded.
+  # ---------------------------------------------------------------------------------------------
+  release:
+    name: Publish to GitHub Releases
+    needs: build
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write            # create/update releases and tags
+    concurrency:
+      group: release-${{ github.ref }}
+      cancel-in-progress: false  # queue; never kill a half-finished publish
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: BTPhonoSink-deb
+          path: dist
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          ls -la dist
+          short="${GITHUB_SHA:0:7}"
+          first_deb=""
+          for f in dist/*.deb; do first_deb="$f"; break; done
+          pkg="$(dpkg-deb -f "$first_deb" Package)"
+
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            # ---- versioned release: v0.2.0 ----
+            tag="${GITHUB_REF_NAME}"
+            if gh release view "$tag" >/dev/null 2>&1; then
+              gh release upload "$tag" dist/* --clobber                 # re-run of the same tag
+            else
+              gh release create "$tag" dist/* --verify-tag --title "BTPhonoSink ${VERSION}" --generate-notes
+            fi
+          else
+            # ---- rolling pre-release "nightly": delete and recreate so the tag moves to this commit ----
+            tag="nightly"
+            gh release delete "$tag" --cleanup-tag --yes >/dev/null 2>&1 || true
+            gh api -X DELETE "repos/${GH_REPO}/git/refs/tags/${tag}" >/dev/null 2>&1 || true
+            sleep 3
+            cat > notes.md <<EOF
+          Automated build of commit ${short} (workflow run #${GITHUB_RUN_NUMBER}).
+
+          - Package version: ${VERSION}
+          - Rootless (iphoneos-arm64), arm64 + arm64e
+          - Verify your download against SHA256SUMS
+
+          Install on the device:
+              sudo dpkg -i <file>.deb && sudo killall -9 bluetoothd
+          Remove:
+              sudo dpkg -r ${pkg}
+
+          Experimental build; not tested on a device by CI.
+          EOF
+            gh release create "$tag" dist/* --target "$GITHUB_SHA" --prerelease \
+              --title "Nightly ${VERSION} (${short})" --notes-file notes.md
+          fi
+
+          echo "Published: https://github.com/${GH_REPO}/releases/tag/${tag}" | tee -a "$GITHUB_STEP_SUMMARY"

@@ -1,5 +1,5 @@
 /*
- * BTPhonoSink - OBSERVE-ONLY build.
+ * BTPhonoSink - v5 safe diagnostics (observe only).
  *
  * Goal of the project: make the iPhone show up as a Bluetooth speaker (A2DP sink). Nobody knows yet whether the
  * daemon's stack can be taught that, so this build only WATCHES. Everything it sees is written to the debug log
@@ -14,8 +14,10 @@
  *      A mismatch is a log line, never a crash.
  *   3. Hooks five functions with a generic pass-through that forwards all eight argument registers untouched and
  *      logs the first calls. It cannot change behaviour, whatever the real signatures turn out to be.
- *   4. ONLY if the "Enable sink experiments" switch is on: whenever the daemon registers an AVDTP *source*
- *      endpoint, register a *sink* endpoint right after it, re-using the same capability list.
+ *   4. Preserves ALL native Source registrations. The v4 endpoint-mirroring experiment is disabled
+ *      regardless of the stored switch value: six native endpoints were seen and the table filled up.
+ *      The sixth argument is a pointer to a ONE-BYTE assigned SEID; do not reuse a Source output pointer
+ *      for an injected Sink (and do not read 8 bytes from the output pointer).
  *
  * Why the old version could not work: every offset in the first analysis pointed one instruction past the
  * function's `pacibsp`. On arm64e that makes the hook's return address double-signed, so the first call crashes.
@@ -38,6 +40,9 @@
  * happened to hold next - harmless, but call #6's tail happened to land on a reused chunk still holding an
  * earlier log line, which looked alarming without this context. v4 dumps exactly numCaps*16 bytes and decodes
  * each record's category inline.
+ *
+ * v5: correctly observe 1-byte SEID output; do not mirror Sink endpoints or overwrite Source SEIDs.
+ *      The firmware/daemon's SDP 0x110B advertising and audio receive path are NOT implemented yet.
  */
 #include <CoreFoundation/CoreFoundation.h>
 #include <mach-o/dyld.h>
@@ -53,11 +58,10 @@
 #include "BTPSLog.h"
 #include "BTPSShared.h"
 
-#define BTPS_BUILD_TAG "observe-only v4"
+#define BTPS_BUILD_TAG "v5-safe-observe"
 
-/* AVDTP constants, used only by the experiment */
+/* AVDTP constants, used for native Source registration diagnostics */
 #define BTPS_AVDTP_TSEP_SRC 0u
-#define BTPS_AVDTP_TSEP_SNK 1u
 #define BTPS_AVDTP_MEDIA_AUDIO 0u
 
 /* ------------------------------------------------------------------------------------------------ helpers */
@@ -173,9 +177,12 @@ static void btps_log_caps(const uint8_t *buf, size_t len)
     for (size_t s = 0; s + 16u <= len; s += 16u) {
         uint8_t cat = buf[s];
         if (cat == 7u) {
-            uint8_t media = buf[s + 1], codec = buf[s + 2], infolen = buf[s + 3];
-            BTPSLog("  record +%04zx: category 7 (Media Codec), media=%u, codecType=0x%02x (%s), codec-specific len=%u",
-                     s, (unsigned)media, (unsigned)codec, btps_codec_name(codec), (unsigned)infolen);
+            /* Confirmed on the observed 16-byte capability records: byte +4 is the codec code.
+             * Leave the surrounding private structure fields undecoded rather than inventing their layout. */
+            uint8_t codec = buf[s + 4];
+            BTPSLog("  record +%04zx: category 7 (Media Codec), raw header=%02x %02x %02x %02x %02x, codec byte+4=0x%02x (%s)",
+                    s, buf[s], buf[s + 1], buf[s + 2], buf[s + 3], buf[s + 4],
+                    (unsigned)codec, btps_codec_name(codec));
         } else {
             BTPSLog("  record +%04zx: category %u", s, (unsigned)cat);
         }
@@ -205,61 +212,85 @@ BTPS_OBSERVER(hook_setconfigind,  BTPS_H_SETCONFIGIND)    /* a remote device con
 BTPS_OBSERVER(hook_accept_sbc,    BTPS_H_ACCEPT_SBC)      /* ... and chose SBC settings                            */
 BTPS_OBSERVER(hook_publish,       BTPS_H_PUBLISH)         /* an audio device was published to the audio system     */
 
-/* AVDTP_RegisterMultipoint(a0=mediaType, a1=endpointType, a2=caps [pointer], a3=numCaps, a4=count); a5 is a
- * pointer the daemon's own log line does not print - not yet known what it's for. See the v3 note above for how
- * this mapping was confirmed (it differs from the print order in that log line). */
+/* AVDTP_RegisterMultipoint: a0=media type, a1=TSEP, a2=caps pointer,
+ * a3=number of 16-byte capability records, a4=count, a5=SEID output BYTE.
+ *
+ * The arm64e daemon stores the assigned SEID with `strb w8, [x19]` at
+ * image+0x0ceee8. Do NOT treat a5 as a uint64_t output. An injected Sink
+ * must never reuse Apple's Source SEID pointer.
+ *
+ * v5 safety: observe without extra registrations. Six native Source records
+ * were previously observed, exhausting the six-entry endpoint table.
+ * Adding even one Sink requires verifying a safe capacity expansion or
+ * an explicit trade-off that removes one Source endpoint.
+ */
+static volatile unsigned g_native_source_success = 0;
+
 static uint64_t hook_register(uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3,
                               uint64_t a4, uint64_t a5, uint64_t a6, uint64_t a7)
 {
     note_call(BTPS_H_REGISTER, a0, a1, a2, a3, a4, a5);
-    unsigned n = g_calls[BTPS_H_REGISTER];
+    const unsigned n = g_calls[BTPS_H_REGISTER];
 
-    /* Learn how Apple lays out the capability list: dump exactly numCaps (a3) 16-byte records - no more, so
-     * nothing past the real list shows up as confusing tail garbage (first few calls only).
-     * Also watch a5: if the real call changes what it points to, that's a sign it's an out-parameter; so far it
-     * has always held this call's own number (1,2,3,...), which looks like the caller's own loop/slot index. */
-    uint64_t a5_before = 0;
-    int a5_readable = (n <= 6u) && btps_peek(a5, &a5_before, sizeof a5_before);
-    if (n <= 6u) {
-        unsigned ncap = (unsigned)a3;
-        size_t dump_len = (ncap >= 1u && ncap <= 6u) ? (size_t)ncap * 16u : 48u;   /* fallback if numCaps is ever unexpected */
-        uint8_t buf[96];
-        if (dump_len > sizeof buf) dump_len = sizeof buf;
-        if (btps_peek(a2, buf, dump_len)) btps_log_caps(buf, dump_len);
-        else BTPSLog("caps value %#llx is not a readable pointer (it may be a handle or bitmask)", (unsigned long long)a2);
-        if (a5_readable) {
-            if (a5_before == (uint64_t)n)
-                BTPSLog("arg5 %#llx currently holds %#llx, which equals this call's own number - probably just "
-                         "the caller's loop/slot index, not written by this function", (unsigned long long)a5,
-                         (unsigned long long)a5_before);
+    /* Read only the one SEID output byte, not eight bytes from the caller. */
+    uint8_t seid_before = 0, seid_after = 0;
+    const int seid_readable = (n <= 16u) &&
+         btps_peek(a5, &seid_before, sizeof seid_before);
+
+    if (n <= 12u) {
+        const unsigned ncap = (unsigned)a3;
+        if (ncap >= 1u && ncap <= 6u) {
+            const size_t len = (size_t)ncap * 16u;
+            uint8_t caps[96];
+            if (btps_peek(a2, caps, len))
+                btps_log_caps(caps, len);
             else
-                BTPSLog("arg5 %#llx currently holds %#llx (unknown purpose, watching for a change)",
-                         (unsigned long long)a5, (unsigned long long)a5_before);
+                BTPSLog("v5: capability pointer %#llx was unreadable",
+                        (unsigned long long)a2);
+        } else {
+            BTPSLog("v5: refusing to interpret unexpected numCaps=%u", ncap);
         }
     }
 
-    uint64_t r = g_orig[BTPS_H_REGISTER] ? g_orig[BTPS_H_REGISTER](a0, a1, a2, a3, a4, a5, a6, a7) : 0;
-    note_return(BTPS_H_REGISTER, r);
+    /* Always forward all arguments untouched. */
+    const uint64_t result = g_orig[BTPS_H_REGISTER]
+        ? g_orig[BTPS_H_REGISTER](a0, a1, a2, a3, a4, a5, a6, a7) : 0;
+    note_return(BTPS_H_REGISTER, result);
 
-    if (a5_readable) {
-        uint64_t a5_after = 0;
-        if (btps_peek(a5, &a5_after, sizeof a5_after) && a5_after != a5_before)
-            BTPSLog("arg5 %#llx changed %#llx -> %#llx across the real call (looks like an out-param after all)",
-                    (unsigned long long)a5, (unsigned long long)a5_before, (unsigned long long)a5_after);
+    if (seid_readable && btps_peek(a5, &seid_after, sizeof seid_after)) {
+        BTPSLog("v5: native registration call #%u SEID byte %u -> %u",
+                n, (unsigned)seid_before, (unsigned)seid_after);
     }
 
-    /* EXPERIMENT (off unless switched on in Settings): mirror each audio SOURCE endpoint as a SINK endpoint with the
-     * same capability list. Re-using Apple's own list avoids guessing the structure layout. */
-    if (BTPSExperimentsEnabled() && g_orig[BTPS_H_REGISTER] &&
-        (uint32_t)a0 == BTPS_AVDTP_MEDIA_AUDIO && (uint32_t)a1 == BTPS_AVDTP_TSEP_SRC && (uint32_t)r == 0u) {
-        BTPSLogNow("EXPERIMENT: registering a SINK endpoint next to this SOURCE one (same caps %#llx)", (unsigned long long)a2);
-        uint64_t r2 = g_orig[BTPS_H_REGISTER](a0, BTPS_AVDTP_TSEP_SNK, a2, a3, a4, a5, a6, a7);
-        BTPSLogNow("EXPERIMENT: sink registration returned %#llx", (unsigned long long)r2);
-        BTPSSetStatus("experiment.sink_register", "returned %#llx", (unsigned long long)r2);
+    if ((uint32_t)a0 == BTPS_AVDTP_MEDIA_AUDIO &&
+        (uint32_t)a1 == BTPS_AVDTP_TSEP_SRC) {
+        if ((uint32_t)result == 0u) {
+            const unsigned sources = __sync_add_and_fetch(&g_native_source_success, 1u);
+            BTPSSetStatus("v5.native_source_count", "%u", sources);
+            BTPSLog("v5: native A2DP Source #%u accepted (SEID=%u)",
+                    sources, (unsigned)seid_after);
+            if (sources == 6u) {
+                BTPSLogNow("v5: six native Source endpoints registered; "
+                           "six-slot table is occupied; Sink injection skipped");
+                BTPSSetStatus("v5.endpoint_capacity",
+                              "6 native Source endpoints; no verified free slot");
+            }
+        } else {
+            BTPSLogNow("v5: native Source registration FAILED, status %#llx",
+                       (unsigned long long)result);
+            BTPSSetStatus("v5.native_source_error", "status %#llx",
+                          (unsigned long long)result);
+        }
     }
-    return r;
+
+    if (BTPSExperimentsEnabled() && n == 1u) {
+        BTPSLogNow("v5: experiment switch ON, but additional Sink registration "
+                   "is intentionally DISABLED pending endpoint-capacity and SDP ABI proof");
+        BTPSSetStatus("experiment.sink_register",
+                      "v5 safety gate: disabled (do not overwrite Source SEIDs)");
+    }
+    return result;
 }
-
 /* ------------------------------------------------------------------------------------------------ installing */
 
 static void install_hooks(uintptr_t base, int uuid_ok)
@@ -348,7 +379,9 @@ static void install_hooks(uintptr_t base, int uuid_ok)
     BTPSLogNow("BTPhonoSink %s loaded into %s pid %d (built %s %s)", BTPS_BUILD_TAG, prog, (int)getpid(), __DATE__, __TIME__);
     BTPSSetStatus("build", "%s, %s %s", BTPS_BUILD_TAG, __DATE__, __TIME__);
     BTPSSetStatus("pid", "%d", (int)getpid());
-    BTPSSetStatus("experiments", "%s", BTPSExperimentsEnabled() ? "ON" : "off (observe-only)");
+    BTPSSetStatus("experiments", "%s", BTPSExperimentsEnabled() ? "flag ON (v5 safety gate active; no Sink injection)" : "off (v5 observe-only)");
+    BTPSSetStatus("experiment.sink_register", "v5 disabled: safe native Source observation only");
+    BTPSSetStatus("v5.sdp_sink_0x110b", "NOT advertised (offline research only)");
 
     char exe[512];
     uint32_t exe_size = sizeof exe;

@@ -1,124 +1,44 @@
-# BTPhonoSink
+# BTPhonoSink — v5 safe diagnostics
 
-Turns a jailbroken iPhone 13 (iOS 17, rootless, arm64e) into a Bluetooth A2DP audio sink — your Legion (or any A2DP source) sees it as a speaker in the Bluetooth menu.
+An experimental rootless/arm64e iOS 17 jailbreak project exploring whether an iPhone 13 can act as an A2DP Bluetooth speaker for a Windows laptop **without Wi-Fi**. **It cannot receive Windows Bluetooth audio yet.**
 
-## What it does (confirmed)
+## What works / does not work
 
-| Hook | What it does | Status |
-|------|-------------|--------|
-| AVDTP_RegisterMultipoint | Registers a SINK endpoint alongside the existing source | ✅ Wired |
-| advertise_A2DP_SDP | Writes AudioSinkSdp=YES preference so SDP builder sees it | ✅ Wired |
-| SetConfigInd_handler | Starts AVAudioEngine when remote source sends SetConfig | ✅ Wired |
-| SetConfig_accept_SBC | Captures sample rate (44.1 or 48 kHz) from accepted config | ✅ Wired |
-| publish_audio_device | Fallback trigger to ensure audio engine is started | ✅ Wired |
-| **media data receive** | Delivers raw SBC frames to the SBC decoder | ⚠️ Needs offset from Frida |
+| Item | v5 status |
+|---|---|
+| Injection into the tested `bluetoothd` version using ElleKit/Theos | Verified in earlier v4 device logs; v5 device confirmation pending |
+| 5 guarded hooks, matched by code fingerprint | Code retained; v5 device confirmation pending |
+| Observing native AVDTP Source endpoints and assigned 1-byte SEIDs | v5 instrumentation, requires a device log to verify |
+| Additional Sink endpoint registration | **Disabled** in v5 (v4 filled the six slots; failed a native Source with 0x68) |
+| Publish A2DP Sink SDP service `0x110B` | **Not implemented** (only offline record-format prototype) |
+| AVDTP media receive / SBC decoding / iPhone speaker output | **Not connected**; files for later research are included but unused by these hooks |
 
-## Build
+**Do not expect Windows to list the iPhone as an AudioEndpoint in v5.** This is a diagnostic step to establish an undisturbed baseline. `AudioSinkSdp` in the daemon does not establish that it can advertise its own sink role.
 
-```bash
-# On your Mac/Linux Theos box
-cd BTPhonoSink
-make package FINALPACKAGE=1
+## Build on GitHub (from existing repository)
 
-# Copy to phone and install
-scp packages/*.deb root@<phone-ip>:/tmp/
-ssh root@<phone-ip> 'dpkg -i /tmp/BTPhonoSink_*.deb'
-# bluetoothd restarts automatically
-```
+The existing `.github/workflows/build.yml` runs on every push; a push to `main` builds a rootless `.deb` on macOS 15 with Theos and publishes it automatically to [the rolling `nightly` Release](https://github.com/m9z2w4d8vw-blip/BTPhonoSink/releases/tag/nightly). The v5 workflow also runs offline Python regression tests before compiling.
 
-Requires Theos with arm64e support and the iOS 17 SDK.
+1. Replace the repository files with the **contents** of the updated v5 source ZIP, not the ZIP archive itself. Preserve the existing `.git` directory if working in a clone.
+2. Commit and push to `main`.
+3. Open the Actions > build run for that commit; check the Python tests, Theos build, and package validation are green.
+4. Open Releases > nightly; download the latest **`.deb`** (not the source ZIP) and install with your normal package manager (Sileo/Filza). Keep the installed previous package available for rollback if necessary.
+5. Start a fresh `bluetoothd` process (the package manager may prompt for restart; otherwise use a normal device reboot and re-jailbreak with Dopamine). Avoid repeated force-kill/restart loops if Bluetooth becomes unstable.
+6. Open iPhone **Settings > BTPhonoSink**, verify Loaded in daemon = Yes, hooks=5 (in log), then tap **Copy log to clipboard**.
+7. In the log, confirm `BTPhonoSink v5-safe-observe`, `native A2DP Source #1 accepted` through `#6 accepted`, and `six native Source endpoints registered; six-slot table is occupied; Sink injection skipped`. Exact counts can vary by launch/connected devices; do not assume success if you instead see `native Source registration FAILED` or any hook missing.
+8. Keep **Legacy sink experiment flag** OFF. In v5 toggling it no longer creates endpoints. Verify existing Bluetooth playback **from iPhone to headset** still works, if you have a Bluetooth headset.
+9. Send the full log, the GitHub Actions run link and any unexpected behavior back for next-stage SDP research.
 
-## Two-phase deployment
+### Windows check
 
-### Phase 1 (install now — no Frida needed)
+Do **not** unpair/re-pair repeatedly expecting a speaker: this version cannot advertise `0x110B`. Windows audio discovery becomes a meaningful test only after a later version publishes a legitimate SDP record.
 
-The tweak already:
-- Registers the A2DP sink AVDTP endpoint
-- Writes the AudioSinkSdp preference
-- Sets up the AVAudioEngine output player
+### Rollback / recovery
 
-After installing, open Bluetooth on your Legion. The iPhone should appear in the device list. Pair and connect. The system may accept the connection (SetConfig will go through) but audio won't play yet because hook #7 is not wired.
+If Bluetooth misbehaves, uninstall BTPhonoSink using Sileo/your package manager, or disable its tweak injection in an available safe-mode/tweak-management tool, then restart/re-jailbreak normally. The project does not modify system files on disk but does hook a system daemon and can cause instability.
 
-### Phase 2 (wire up the media receive — one Frida session)
+## Offline tests and reverse engineering
 
-1. Pair and connect the Legion as A2DP source (Phase 1 complete).
-2. Start playing audio on the Legion.
-3. On the iPhone via SSH:
-   ```bash
-   frida -p $(pidof bluetoothd) -l /var/mobile/Documents/find_media_cb.js
-   ```
-4. Watch for the line:
-   ```
-   [MEDIA_CB] *** CANDIDATE FOUND ***
-     offset = 0x...
-   ```
-5. Open `Tweak.xm`, scroll to the TODO in hook #7, and add:
-   ```objc
-   // replace MEDIA_RECV_OFFSET with the offset from step 4
-   #define MEDIA_RECV_OFFSET 0x<offset>
+Run `python3 -m unittest discover -s tests -v` on Windows/macOS/Linux. `python3 tools/sdp_record.py` creates and locally decodes a Bluetooth A2DP Sink SDP **Data Element list** (L2CAP/AVDTP, UUID `0x110B`, profile `0x110D`, SupportedFeatures speaker bit), but the output is NOT the private OI_SDPDB API's in-memory record representation. `python3 tools/inspect_bluetoothd.py /path/to/bluetoothd` verifies the exact iOS 17 daemon SHA-256 plus the five function signatures if you have your previously extracted binary locally. No binary or device secrets are included.
 
-   typedef void (*media_recv_t)(uint32_t handle,
-                                uint8_t *data, uint32_t len,
-                                void *ctx);
-   static media_recv_t orig_media_recv = NULL;
-
-   static void hook_media_recv(uint32_t handle,
-                                uint8_t *data, uint32_t len,
-                                void *ctx) {
-       if (data && len > 12)
-           btphonosink_on_media_payload(data + 12, len - 12);
-       if (orig_media_recv)
-           orig_media_recv(handle, data, len, ctx);
-   }
-   ```
-6. In the `hooks[]` array in `%ctor`, add:
-   ```objc
-   { MEDIA_RECV_OFFSET, (void*)hook_media_recv,
-     (void**)&orig_media_recv, "media_recv" },
-   ```
-7. `make package FINALPACKAGE=1`, reinstall. Audio now plays through the iPhone speaker.
-
-## SBC decoder
-
-`sbc_decode.c` implements the full A2DP SBC decoder from the Bluetooth spec —
-no external dependencies. It handles:
-- 44.1 kHz / 48 kHz
-- Mono, Stereo, Dual Channel, Joint Stereo
-- 4 or 8 subbands, 4/8/12/16 blocks
-- Loudness and SNR bit allocation
-
-## Binary offsets used (iOS 17, iPhone 13, 10,196,720-byte bluetoothd)
-
-```
-AVDTP_RegisterMultipoint  0x000cecf4
-advertise_A2DP_SDP        0x00044de28
-SetConfigInd_handler      0x00037ae6c
-SetConfig_accept_SBC      0x0003b03b8
-publish_audio_device      0x000376e50
-A2DPAudioDevice_readHndlr 0x000593710
-A2DP_send_data            0x000380af0
-approve_incoming_stream   0x00037ab1c
-register_a2dp_source      0x000727268
-```
-
-If bluetoothd is updated, re-run the binary analysis to get new offsets.
-
-## How the audio path works
-
-```
-Legion (BT source)
-   │  Bluetooth A2DP (SBC encoded)
-   ▼
-bluetoothd (iPhone)
-   │  AVDTP media channel L2CAP receive  ← hook #7 wires here
-   │  strip 12-byte RTP header
-   ▼
-btphonosink_on_media_payload()
-   │  sbc_decode_a2dp_payload()          ← SBC decoder in sbc_decode.c
-   │  writes int16 PCM to ring buffer
-   ▼
-AVAudioEngine / AVAudioSourceNode        ← SBCSink.mm
-   │  pulls from ring buffer on render thread
-   ▼
-iPhone speaker / AirPods / etc.
-```
+See `docs/V5_STATIC_FINDINGS.md` for image-relative disassembly landmarks and unresolved SDP API arguments / endpoint allocation constraints.
