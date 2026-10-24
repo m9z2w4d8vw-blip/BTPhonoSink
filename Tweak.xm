@@ -6,8 +6,11 @@
  * that Settings > BTPhonoSink displays.
  *
  * What it does:
- *   1. Refuses to touch anything unless this is the exact bluetoothd build that was analysed (image UUID).
- *   2. For every target function, checks the first four instruction words before hooking (BTPSBuild.h).
+ *   1. Finds the daemon's own image (the one MH_EXECUTE image; NOT "image 0", which is not reliable when libraries
+ *      are injected), logs the loaded images, and compares its UUID with the analysed build.
+ *   2. The real guard is the CODE: before hooking, the first four instruction words of every target are compared
+ *      with BTPSBuild.h (read with a fault-safe reader). If the UUID differs but the code at all five targets
+ *      matches, it is the same code (a patched copy) and hooking proceeds; any other mismatch hooks nothing.
  *      A mismatch is a log line, never a crash.
  *   3. Hooks five functions with a generic pass-through that forwards all eight argument registers untouched and
  *      logs the first calls. It cannot change behaviour, whatever the real signatures turn out to be.
@@ -32,7 +35,7 @@
 #include "BTPSLog.h"
 #include "BTPSShared.h"
 
-#define BTPS_BUILD_TAG "observe-only v1"
+#define BTPS_BUILD_TAG "observe-only v2"
 
 /* AVDTP constants, used only by the experiment */
 #define BTPS_AVDTP_TSEP_SRC 0u
@@ -57,19 +60,33 @@ static int btps_peek(uint64_t addr, void *out, size_t n)
     return kr == KERN_SUCCESS && got == (vm_size_t)n;
 }
 
-static int main_image(uint8_t uuid_out[16], uintptr_t *base_out)
+static int image_uuid(const struct mach_header_64 *mh, uint8_t out[16])
 {
-    const struct mach_header_64 *mh = (const struct mach_header_64 *)_dyld_get_image_header(0);
-    if (!mh || mh->magic != MH_MAGIC_64) return 0;
-    *base_out = (uintptr_t)mh;
+    if (!mh || mh->magic != MH_MAGIC_64 || mh->ncmds > 4096u) return 0;
     const uint8_t *p = (const uint8_t *)(mh + 1);
     for (uint32_t i = 0; i < mh->ncmds; i++) {
         const struct load_command *lc = (const struct load_command *)p;
+        if (lc->cmdsize < sizeof(struct load_command)) return 0;       /* corrupt header: stop */
         if (lc->cmd == LC_UUID) {
-            memcpy(uuid_out, ((const struct uuid_command *)lc)->uuid, 16);
+            memcpy(out, ((const struct uuid_command *)lc)->uuid, 16);
             return 1;
         }
         p += lc->cmdsize;
+    }
+    return 0;
+}
+
+/* The daemon is the one image of type MH_EXECUTE. Its index is not guaranteed to be 0 when libraries are injected. */
+static int find_main_image(uint32_t *index_out, const struct mach_header_64 **mh_out)
+{
+    uint32_t n = _dyld_image_count();
+    for (uint32_t i = 0; i < n; i++) {
+        const struct mach_header_64 *mh = (const struct mach_header_64 *)_dyld_get_image_header(i);
+        if (mh && mh->magic == MH_MAGIC_64 && mh->filetype == MH_EXECUTE) {
+            *index_out = i;
+            *mh_out = mh;
+            return 1;
+        }
     }
     return 0;
 }
@@ -78,6 +95,28 @@ static void uuid_string(const uint8_t u[16], char *out, size_t cap)
 {
     snprintf(out, cap, "%02X%02X%02X%02X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X%02X%02X",
              u[0], u[1], u[2], u[3], u[4], u[5], u[6], u[7], u[8], u[9], u[10], u[11], u[12], u[13], u[14], u[15]);
+}
+
+static const char *tail_of(const char *s, size_t keep)
+{
+    if (!s) return "?";
+    size_t n = strlen(s);
+    return n > keep ? s + (n - keep) : s;
+}
+
+/* Log the first loaded images (index, address, type, UUID, path) so it is never a guess which one is which. */
+static void log_images(void)
+{
+    uint32_t n = _dyld_image_count();
+    BTPSLogNow("loaded images: %u (listing the first %u)", n, n < 8u ? n : 8u);
+    for (uint32_t i = 0; i < n && i < 8u; i++) {
+        const struct mach_header_64 *mh = (const struct mach_header_64 *)_dyld_get_image_header(i);
+        uint8_t u[16];
+        char us[40] = "-";
+        if (image_uuid(mh, u)) uuid_string(u, us, sizeof us);
+        BTPSLog("image[%u] %p type=%u uuid=%s %s", i, (const void *)mh, mh ? (unsigned)mh->filetype : 0u, us,
+                tail_of(_dyld_get_image_name(i), 70));
+    }
 }
 
 static void note_call(int idx, uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5)
@@ -157,26 +196,57 @@ static void install_hooks(uintptr_t base, int uuid_ok)
     hook_fn[BTPS_H_ACCEPT_SBC]   = (void *)hook_accept_sbc;
     hook_fn[BTPS_H_PUBLISH]      = (void *)hook_publish;
 
+    /* 1. read the first four instruction words of every target with the fault-safe reader and compare */
+    int match[BTPS_N_HOOKS];
+    unsigned nmatch = 0;
+    for (int i = 0; i < BTPS_N_HOOKS; i++) {
+        const btps_target_t *t = &BTPS_TARGETS[i];
+        uint32_t w[4] = {0, 0, 0, 0};
+        int readable = btps_peek((uint64_t)(base + t->entry), w, sizeof w);
+        match[i] = readable && memcmp(w, t->sig, sizeof w) == 0;
+        nmatch += (unsigned)match[i];
+        if (!match[i]) {
+            if (readable)
+                BTPSLogNow("%s: code at image+%#lx is %08x %08x %08x %08x, expected %08x %08x %08x %08x", t->name,
+                           (unsigned long)t->entry, w[0], w[1], w[2], w[3], t->sig[0], t->sig[1], t->sig[2], t->sig[3]);
+            else
+                BTPSLogNow("%s: image+%#lx is not readable", t->name, (unsigned long)t->entry);
+        }
+    }
+
+    /* 2. decide: the UUID is a hint, the code is the proof */
+    int all_match  = (nmatch == (unsigned)BTPS_N_HOOKS);
+    int recognised = uuid_ok || all_match;
+    if (uuid_ok) {
+        BTPSSetStatus("image.match", "yes - UUID matches the analysed build");
+    } else if (all_match) {
+        BTPSSetStatus("image.match", "yes - code matches although the UUID differs");
+        BTPSLogNow("UUID differs from the analysed build, but the code at all %d targets matches: hooking", BTPS_N_HOOKS);
+    } else {
+        BTPSSetStatus("image.match", "NO - unknown build, hooks disabled");
+        BTPSLogNow("unknown daemon build: UUID differs and only %u of %d targets match: no hooks will be installed",
+                   nmatch, BTPS_N_HOOKS);
+    }
+
+    /* 3. hook */
     unsigned ok = 0, bad = 0;
     for (int i = 0; i < BTPS_N_HOOKS; i++) {
         const btps_target_t *t = &BTPS_TARGETS[i];
         char key[56];
         snprintf(key, sizeof key, "hook.%s", t->name);
 
-        if (!uuid_ok) {
-            BTPSSetStatus(key, "NOT hooked: unknown bluetoothd build");
+        if (!recognised) {
+            BTPSSetStatus(key, "NOT hooked: unknown daemon build");
             bad++;
             continue;
         }
-        const uint32_t *code = (const uint32_t *)(base + t->entry);
-        if (memcmp(code, t->sig, sizeof t->sig) != 0) {
-            BTPSLogNow("%s: first instructions differ from the analysed build -> NOT hooking (%08x %08x %08x %08x)",
-                       t->name, code[0], code[1], code[2], code[3]);
-            BTPSSetStatus(key, "skipped: code differs (%08x %08x)", code[0], code[1]);
+        if (!match[i]) {
+            BTPSSetStatus(key, "skipped: code differs");
             bad++;
             continue;
         }
 
+        const uint32_t *code = (const uint32_t *)(base + t->entry);
         BTPSLogNow("hooking %s at image+%#lx (%p)", t->name, (unsigned long)t->entry, (const void *)code);
         void *orig = NULL;
         MSHookFunction((void *)code, hook_fn[i], &orig);
@@ -191,7 +261,7 @@ static void install_hooks(uintptr_t base, int uuid_ok)
         BTPSSetStatus(key, "installed");
         ok++;
     }
-    BTPSSetSummary(1u, (unsigned)uuid_ok, ok, bad);
+    BTPSSetSummary(1u, (unsigned)recognised, ok, bad);
     BTPSLogNow("hooks: %u installed, %u not installed", ok, bad);
 }
 
@@ -205,18 +275,33 @@ static void install_hooks(uintptr_t base, int uuid_ok)
     BTPSSetStatus("pid", "%d", (int)getpid());
     BTPSSetStatus("experiments", "%s", BTPSExperimentsEnabled() ? "ON" : "off (observe-only)");
 
+    char exe[512];
+    uint32_t exe_size = sizeof exe;
+    if (_NSGetExecutablePath(exe, &exe_size) != 0) snprintf(exe, sizeof exe, "?");
+    BTPSLogNow("executable path: %s", tail_of(exe, 120));
+    BTPSSetStatus("image.exec_path", "%s", tail_of(exe, 150));
+
+    log_images();
+
+    uint32_t index = 0;
+    const struct mach_header_64 *mh = NULL;
+    if (!find_main_image(&index, &mh)) {
+        BTPSLogNow("no MH_EXECUTE image found: no hooks will be installed");
+        BTPSSetStatus("image.match", "NO - main executable not found, hooks disabled");
+        BTPSSetSummary(1u, 0u, 0u, (unsigned)BTPS_N_HOOKS);
+        return;
+    }
+
     uint8_t uuid[16] = {0};
-    uintptr_t base = 0;
-    int have = main_image(uuid, &base);
     char have_s[40] = "?";
+    int have = image_uuid(mh, uuid);
     if (have) uuid_string(uuid, have_s, sizeof have_s);
     int uuid_ok = have && memcmp(uuid, BTPS_EXPECTED_UUID, 16) == 0;
 
-    BTPSLogNow("image base %p, UUID %s", (void *)base, have_s);
+    BTPSLogNow("main executable is image[%u] at %p, UUID %s (analysed build: %s)", index, (const void *)mh, have_s, BTPS_BUILD_UUID);
+    BTPSSetStatus("image.index", "%u", index);
     BTPSSetStatus("image.uuid", "%s", have_s);
     BTPSSetStatus("image.expected", "%s", BTPS_BUILD_UUID);
-    BTPSSetStatus("image.match", "%s", uuid_ok ? "yes - offsets apply" : "NO - hooks disabled");
-    if (!uuid_ok) BTPSLogNow("UUID differs from the analysed build %s: no hooks will be installed", BTPS_BUILD_UUID);
 
-    install_hooks(base, uuid_ok);
+    install_hooks((uintptr_t)mh, uuid_ok);
 }

@@ -120,7 +120,7 @@ static NSArray<NSString *> *ReadFileLines(NSString *path, NSString **note)
         uuidOK = [s.status[@"image.match"] hasPrefix:@"yes"];
     }
     if (!known) return @"No data yet";
-    if (!uuidOK) return @"Yes - wrong build, no hooks";
+    if (!uuidOK) return @"Yes - unknown daemon build, no hooks";
     return [NSString stringWithFormat:@"Yes - %u hook%s%@", hooksOK, hooksOK == 1 ? "" : "s",
             hooksBad ? [NSString stringWithFormat:@", %u skipped", hooksBad] : @""];
 }
