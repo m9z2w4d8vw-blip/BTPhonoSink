@@ -17,10 +17,18 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = BTPhonoSink
 
-BTPhonoSink_FILES      = Tweak.xm SBCSink.mm sbc_decode.c
+BTPhonoSink_FILES      = Tweak.xm BTPSLog.c BTPSCore.c SBCSink.mm sbc_decode.c
 BTPhonoSink_CFLAGS     = -fobjc-arc -fvisibility=hidden
 BTPhonoSink_CCFLAGS    = -std=c++17 -fobjc-arc -fvisibility=hidden
-BTPhonoSink_FRAMEWORKS = AVFoundation AudioToolbox CoreAudio Foundation
+BTPhonoSink_FRAMEWORKS = AVFoundation AudioToolbox CoreAudio CoreFoundation Foundation
 BTPhonoSink_LIBRARIES  = substrate
 
 include $(THEOS)/makefiles/tweak.mk
+
+# The Settings > Tweaks page with the debug log (folder btphonosinkprefs/).
+# If it ever fails to build, set this to 0 (or run: make package BTPS_WITH_PREFS=0) and the tweak still builds.
+BTPS_WITH_PREFS ?= 1
+ifeq ($(BTPS_WITH_PREFS),1)
+SUBPROJECTS += btphonosinkprefs
+include $(THEOS_MAKE_PATH)/aggregate.mk
+endif

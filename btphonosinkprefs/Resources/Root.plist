@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>title</key>
+	<string>BTPhonoSink</string>
+	<key>items</key>
+	<array>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Status</string>
+			<key>footerText</key>
+			<string>Read from the tweak running inside the Bluetooth daemon. "No data yet" means the tweak has not written anything: it is not loaded, or the daemon's sandbox blocks every log channel.</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSTitleValueCell</string>
+			<key>label</key>
+			<string>Loaded in daemon</string>
+			<key>get</key>
+			<string>loadedValue:</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSTitleValueCell</string>
+			<key>label</key>
+			<string>Last event</string>
+			<key>get</key>
+			<string>lastEventValue:</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSTitleValueCell</string>
+			<key>label</key>
+			<string>Log channels</string>
+			<key>get</key>
+			<string>channelValue:</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Debug log</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>View debug log</string>
+			<key>action</key>
+			<string>showLog:</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>Copy log to clipboard</string>
+			<key>action</key>
+			<string>copyLog:</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>Clear log</string>
+			<key>action</key>
+			<string>clearLog:</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Experiments</string>
+			<key>footerText</key>
+			<string>Off: the tweak only watches and logs. On: the next time the Bluetooth daemon starts, it also registers an A2DP sink endpoint next to Apple's source endpoint. Restart the daemon to apply (killall -9 bluetoothd over SSH). Turn it off again if Bluetooth misbehaves.</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>label</key>
+			<string>Enable sink experiments</string>
+			<key>defaults</key>
+			<string>com.apple.bluetooth</string>
+			<key>key</key>
+			<string>BTPhonoSinkExperiments</string>
+			<key>default</key>
+			<false/>
+		</dict>
+	</array>
+</dict>
+</plist>

@@ -2,7 +2,7 @@ Package: com.parv.btphonosink
 Name: BTPhonoSink
 Version: 0.1.0
 Architecture: iphoneos-arm64
-Description: Turns the iPhone into a Bluetooth A2DP audio sink (speaker)
+Description: Bluetooth A2DP sink experiment for the iPhone (observe-only build, debug log in Settings)
 Author: Parv
 Section: Tweaks
-Depends: mobilesubstrate, firmware (>= 14.0)
+Depends: mobilesubstrate, preferenceloader, firmware (>= 14.0)
