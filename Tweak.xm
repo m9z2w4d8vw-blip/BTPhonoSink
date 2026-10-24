@@ -28,6 +28,16 @@
  * a3 as caps and a2 as endpointType; that's why the log said "caps value 0x3 is not a readable pointer"
  * (0x3 is numCaps, not caps) and why the experiment's Source/Sink check and substitution were on the wrong
  * register entirely.
+ *
+ * v4: with a2 fixed, the first real capability-list bytes came back. The list is a run of fixed 16-byte
+ * records, one per AVDTP service category (byte 0 of each 16 bytes = the category: 1 Media Transport, 7 Media
+ * Codec, 8 Delay Reporting), and numCaps (a3) is exactly how many 16-byte records there are - 3 on every call
+ * seen so far, so 48 bytes total. The Media Codec record's own fields (media type, codec type, codec-specific
+ * length) matched three different codecs across the six calls: SBC, MPEG-2/4 AAC, and a vendor-specific one.
+ * v3 dumped a fixed 96 bytes, twice the real size, so anything past the real list was just whatever the heap
+ * happened to hold next - harmless, but call #6's tail happened to land on a reused chunk still holding an
+ * earlier log line, which looked alarming without this context. v4 dumps exactly numCaps*16 bytes and decodes
+ * each record's category inline.
  */
 #include <CoreFoundation/CoreFoundation.h>
 #include <mach-o/dyld.h>
@@ -43,7 +53,7 @@
 #include "BTPSLog.h"
 #include "BTPSShared.h"
 
-#define BTPS_BUILD_TAG "observe-only v3"
+#define BTPS_BUILD_TAG "observe-only v4"
 
 /* AVDTP constants, used only by the experiment */
 #define BTPS_AVDTP_TSEP_SRC 0u
@@ -141,6 +151,37 @@ static void note_call(int idx, uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a
     }
 }
 
+/* AVDTP MediaCodecType, from the Bluetooth A2DP spec (confirmed against three real on-device captures: the
+ * codec-specific-info length that comes with each of these - 4, 6, 14 bytes - matches the spec exactly). */
+static const char *btps_codec_name(uint8_t codec_type)
+{
+    switch (codec_type) {
+        case 0x00: return "SBC";
+        case 0x01: return "MPEG-1,2 Audio";
+        case 0x02: return "MPEG-2,4 AAC";
+        case 0x04: return "ATRAC";
+        case 0xFF: return "Vendor-specific";
+        default:   return "unknown";
+    }
+}
+
+/* Decode one AVDTP capability list: a run of fixed 16-byte records, one per service category (byte 0 = the
+ * category). `len` should be a whole number of 16-byte records (normally numCaps*16; see the v4 note above). */
+static void btps_log_caps(const uint8_t *buf, size_t len)
+{
+    BTPSLogHexdump("caps", buf, len);
+    for (size_t s = 0; s + 16u <= len; s += 16u) {
+        uint8_t cat = buf[s];
+        if (cat == 7u) {
+            uint8_t media = buf[s + 1], codec = buf[s + 2], infolen = buf[s + 3];
+            BTPSLog("  record +%04zx: category 7 (Media Codec), media=%u, codecType=0x%02x (%s), codec-specific len=%u",
+                     s, (unsigned)media, (unsigned)codec, btps_codec_name(codec), (unsigned)infolen);
+        } else {
+            BTPSLog("  record +%04zx: category %u", s, (unsigned)cat);
+        }
+    }
+}
+
 static void note_return(int idx, uint64_t r)
 {
     if (g_calls[idx] <= 25u)
@@ -173,16 +214,28 @@ static uint64_t hook_register(uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3
     note_call(BTPS_H_REGISTER, a0, a1, a2, a3, a4, a5);
     unsigned n = g_calls[BTPS_H_REGISTER];
 
-    /* Learn how Apple lays out the capability list: dump the memory `caps` (a2) points at (first few calls only).
-     * Also watch a5: if the real call changes what it points to, that's a strong sign it's an out-parameter. */
+    /* Learn how Apple lays out the capability list: dump exactly numCaps (a3) 16-byte records - no more, so
+     * nothing past the real list shows up as confusing tail garbage (first few calls only).
+     * Also watch a5: if the real call changes what it points to, that's a sign it's an out-parameter; so far it
+     * has always held this call's own number (1,2,3,...), which looks like the caller's own loop/slot index. */
     uint64_t a5_before = 0;
     int a5_readable = (n <= 6u) && btps_peek(a5, &a5_before, sizeof a5_before);
     if (n <= 6u) {
+        unsigned ncap = (unsigned)a3;
+        size_t dump_len = (ncap >= 1u && ncap <= 6u) ? (size_t)ncap * 16u : 48u;   /* fallback if numCaps is ever unexpected */
         uint8_t buf[96];
-        if (btps_peek(a2, buf, sizeof buf)) BTPSLogHexdump("caps", buf, sizeof buf);
+        if (dump_len > sizeof buf) dump_len = sizeof buf;
+        if (btps_peek(a2, buf, dump_len)) btps_log_caps(buf, dump_len);
         else BTPSLog("caps value %#llx is not a readable pointer (it may be a handle or bitmask)", (unsigned long long)a2);
-        if (a5_readable) BTPSLog("arg5 %#llx currently holds %#llx (unknown purpose, watching for a change)",
-                                  (unsigned long long)a5, (unsigned long long)a5_before);
+        if (a5_readable) {
+            if (a5_before == (uint64_t)n)
+                BTPSLog("arg5 %#llx currently holds %#llx, which equals this call's own number - probably just "
+                         "the caller's loop/slot index, not written by this function", (unsigned long long)a5,
+                         (unsigned long long)a5_before);
+            else
+                BTPSLog("arg5 %#llx currently holds %#llx (unknown purpose, watching for a change)",
+                         (unsigned long long)a5, (unsigned long long)a5_before);
+        }
     }
 
     uint64_t r = g_orig[BTPS_H_REGISTER] ? g_orig[BTPS_H_REGISTER](a0, a1, a2, a3, a4, a5, a6, a7) : 0;
@@ -191,7 +244,7 @@ static uint64_t hook_register(uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3
     if (a5_readable) {
         uint64_t a5_after = 0;
         if (btps_peek(a5, &a5_after, sizeof a5_after) && a5_after != a5_before)
-            BTPSLog("arg5 %#llx changed %#llx -> %#llx across the real call (looks like an out-param)",
+            BTPSLog("arg5 %#llx changed %#llx -> %#llx across the real call (looks like an out-param after all)",
                     (unsigned long long)a5, (unsigned long long)a5_before, (unsigned long long)a5_after);
     }
 
