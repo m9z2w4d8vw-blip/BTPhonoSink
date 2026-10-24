@@ -51,7 +51,7 @@ static NSArray<NSString *> *ReadFileLines(NSString *path, NSString **note)
     }
     NSMutableArray<NSString *> *lines = [[text componentsSeparatedByString:@"\n"] mutableCopy];
     while (lines.count && [lines.lastObject length] == 0) [lines removeLastObject];
-    if (lines.count > 300) [lines removeObjectsInRange:NSMakeRange(0, lines.count - 300)];
+    if (lines.count > 480) [lines removeObjectsInRange:NSMakeRange(0, lines.count - 480)];
     *note = lines.count ? @"ok" : @"empty";
     return lines;
 }
@@ -83,15 +83,16 @@ static NSArray<NSString *> *ReadFileLines(NSString *path, NSString **note)
     return s;
 }
 
-// The source with the most lines wins (the tweak writes the same lines to all of them).
+// Prefer the current daemon's in-memory ring copied through preferences.
+// File channels append across daemon sessions, so "most lines wins" can show
+// stale v4 events in place of a smaller, current v6 session!
 - (NSArray<NSString *> *)bestLines:(BTPSSnapshot *)s source:(NSString **)name
 {
-    NSArray<NSString *> *best = s.prefLines;
-    *name = @"preferences";
-    if (s.tmpFileLines.count > best.count) { best = s.tmpFileLines; *name = @"file in /tmp/FTABHarvest"; }
-    if (s.altFileLines.count > best.count) { best = s.altFileLines; *name = @"file in /var/mobile/Library/Logs"; }
-    if (best.count == 0) *name = @"none";
-    return best;
+    if (s.prefLines.count) { *name = @"preferences (current captured session)"; return s.prefLines; }
+    if (s.tmpFileLines.count) { *name = @"file in /tmp/FTABHarvest (may span sessions)"; return s.tmpFileLines; }
+    if (s.altFileLines.count) { *name = @"file in /var/mobile/Library/Logs (may span sessions)"; return s.altFileLines; }
+    *name = @"none";
+    return @[];
 }
 
 #pragma mark - summaries for the main screen
@@ -161,7 +162,30 @@ static NSArray<NSString *> *ReadFileLines(NSString *path, NSString **note)
     fmt.dateFormat = @"HH:mm:ss";
     [out appendFormat:@"BTPhonoSink debug log - read at %@\n\n", [fmt stringFromDate:[NSDate date]]];
 
-    [out appendString:@"== STATUS (written by the tweak inside the daemon) ==\n"];
+    NSUInteger hookCount = 0;
+    for (NSString *key in s.status) {
+        if ([key hasPrefix:@"hook."] && [s.status[key] isEqualToString:@"installed"]) hookCount++;
+    }
+    [out appendString:@"== SESSION AND CHECKLIST ==\n"];
+    [out appendFormat:@"build: %@ | pid: %@ | session: %@\n",
+        s.status[@"build"] ?: @"unknown", s.status[@"pid"] ?: @"unknown",
+        s.status[@"diag.session_id"] ?: @"unknown"];
+    [out appendFormat:@"hooks installed: %lu / 5 | native sources: %@ / 6 seen previously\n",
+        (unsigned long)hookCount,
+        s.status[@"diag.native_source_ok"] ?: @"unknown"];
+    [out appendFormat:@"Sink SDP 0x110B: %@\n", s.status[@"diag.sdp_sink_0x110b"] ?: @"not measured"];
+    [out appendFormat:@"Incoming audio path: %@\n", s.status[@"diag.audio_receive"] ?: @"not measured"];
+    [out appendFormat:@"Configuration callback: %@ | SBC acceptance callback: %@\n",
+        s.status[@"seen.SetConfigInd_handler"] ?: @"not seen in current captured status",
+        s.status[@"seen.SetConfig_accept_SBC"] ?: @"not seen in current captured status"];
+    if (s.notifyOK) {
+        unsigned l, u, e, ok, bad; uint32_t t;
+        btps_state_unpack(s.notifyState, &l, &u, &e, &ok, &bad, &t);
+        NSTimeInterval age = [[NSDate date] timeIntervalSince1970] - (NSTimeInterval)t;
+        if (t && age > 180)
+            [out appendFormat:@"WARNING: last daemon event is %.0f seconds old; status may be stale.\n", age];
+    }
+    [out appendString:@"\n== STATUS (written by the tweak inside the daemon) ==\n"];
     if (s.status.count == 0) {
         [out appendString:@"(nothing yet)\n"];
     } else {
@@ -184,7 +208,7 @@ static NSArray<NSString *> *ReadFileLines(NSString *path, NSString **note)
     [out appendFormat:@"\n== LOG (from %@, oldest first) ==\n", src];
     if (lines.count == 0) {
         [out appendString:@"(empty)\n\nIf this stays empty:\n"
-                           "- the tweak is not loaded into the Bluetooth daemon (restart it: killall -9 bluetoothd), or\n"
+                           "- the tweak is not loaded into the Bluetooth daemon (reboot and re-jailbreak with Dopamine), or\n"
                            "- the daemon's sandbox blocks every channel (the STATUS block above then says so once any channel works).\n"];
     } else {
         [out appendString:[lines componentsJoinedByString:@"\n"]];

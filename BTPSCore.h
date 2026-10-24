@@ -7,8 +7,8 @@
 extern "C" {
 #endif
 
-#define BTPS_RING_LINES 300     /* lines kept                                            */
-#define BTPS_LINE_MAX   220     /* bytes per line including the terminating NUL          */
+#define BTPS_RING_LINES 480     /* lines kept                                            */
+#define BTPS_LINE_MAX   300     /* bytes per line including the terminating NUL          */
 
 typedef struct {
     char               line[BTPS_RING_LINES][BTPS_LINE_MAX];

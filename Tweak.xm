@@ -1,5 +1,5 @@
 /*
- * BTPhonoSink - v5 safe diagnostics (observe only).
+ * BTPhonoSink - v6 detailed passive diagnostics (observe only).
  *
  * Goal of the project: make the iPhone show up as a Bluetooth speaker (A2DP sink). Nobody knows yet whether the
  * daemon's stack can be taught that, so this build only WATCHES. Everything it sees is written to the debug log
@@ -42,12 +42,16 @@
  * each record's category inline.
  *
  * v5: correctly observe 1-byte SEID output; do not mirror Sink endpoints or overwrite Source SEIDs.
- *      The firmware/daemon's SDP 0x110B advertising and audio receive path are NOT implemented yet.
+ * v6: decode the observed codec at byte +2, trace return values and timings and include
+ *      a session-specific export. SDP 0x110B and media receive remain NOT implemented.
  */
 #include <CoreFoundation/CoreFoundation.h>
 #include <mach-o/dyld.h>
 #include <mach-o/loader.h>
 #include <mach/mach.h>
+#include <mach/mach_time.h>
+#include <time.h>
+#include "BTPSDiagnostics.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -58,7 +62,7 @@
 #include "BTPSLog.h"
 #include "BTPSShared.h"
 
-#define BTPS_BUILD_TAG "v5-safe-observe"
+#define BTPS_BUILD_TAG "v6-detailed-observe"
 
 /* AVDTP constants, used for native Source registration diagnostics */
 #define BTPS_AVDTP_TSEP_SRC 0u
@@ -155,38 +159,38 @@ static void note_call(int idx, uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a
     }
 }
 
-/* AVDTP MediaCodecType, from the Bluetooth A2DP spec (confirmed against three real on-device captures: the
- * codec-specific-info length that comes with each of these - 4, 6, 14 bytes - matches the spec exactly). */
-static const char *btps_codec_name(uint8_t codec_type)
-{
-    switch (codec_type) {
-        case 0x00: return "SBC";
-        case 0x01: return "MPEG-1,2 Audio";
-        case 0x02: return "MPEG-2,4 AAC";
-        case 0x04: return "ATRAC";
-        case 0xFF: return "Vendor-specific";
-        default:   return "unknown";
-    }
-}
-
-/* Decode one AVDTP capability list: a run of fixed 16-byte records, one per service category (byte 0 = the
- * category). `len` should be a whole number of 16-byte records (normally numCaps*16; see the v4 note above). */
+/* Decode the copied 16-byte records from this particular firmware. Do not treat
+ * these byte positions as an ABI or use them to construct new endpoints. */
 static void btps_log_caps(const uint8_t *buf, size_t len)
 {
-    BTPSLogHexdump("caps", buf, len);
-    for (size_t s = 0; s + 16u <= len; s += 16u) {
-        uint8_t cat = buf[s];
-        if (cat == 7u) {
-            /* Confirmed on the observed 16-byte capability records: byte +4 is the codec code.
-             * Leave the surrounding private structure fields undecoded rather than inventing their layout. */
-            uint8_t codec = buf[s + 4];
-            BTPSLog("  record +%04zx: category 7 (Media Codec), raw header=%02x %02x %02x %02x %02x, codec byte+4=0x%02x (%s)",
-                    s, buf[s], buf[s + 1], buf[s + 2], buf[s + 3], buf[s + 4],
-                    (unsigned)codec, btps_codec_name(codec));
-        } else {
-            BTPSLog("  record +%04zx: category %u", s, (unsigned)cat);
-        }
+    btps_caps_info_t c;
+    if (!btps_decode_caps(buf, len, &c)) {
+        BTPSLog("CAPS invalid or truncated, len=%zu; no decoding attempted", len);
+        return;
     }
+    BTPSLog("CAPS records=%u transport=%u codec=%u delay=%u other=%u fingerprint=%08x",
+            c.total_records, c.transport_records, c.codec_records, c.delay_records,
+            c.unknown_records, c.fingerprint);
+    if (c.codec_present) {
+        BTPSLog("CAPS codec=%s (code=0x%02x at record+2) media=%u specific_len=%u",
+                btps_codec_name(c.codec_type), (unsigned)c.codec_type,
+                (unsigned)c.media_type, (unsigned)c.codec_data_len);
+        BTPSSetStatus("diag.last_caps", "%s code=%02x len=%u hash=%08x",
+                      btps_codec_name(c.codec_type), (unsigned)c.codec_type,
+                      (unsigned)c.codec_data_len, c.fingerprint);
+    } else {
+        BTPSLog("CAPS no codec record found");
+    }
+    BTPSLogHexdump("caps", buf, len);
+}
+
+static uint64_t btps_elapsed_us(uint64_t start, uint64_t end)
+{
+    if (end < start) return 0;
+    mach_timebase_info_data_t tb = {0, 0};
+    (void)mach_timebase_info(&tb);
+    if (!tb.denom) return 0;
+    return ((end - start) * (uint64_t)tb.numer / (uint64_t)tb.denom) / 1000u;
 }
 
 static void note_return(int idx, uint64_t r)
@@ -197,20 +201,34 @@ static void note_return(int idx, uint64_t r)
 
 /* ------------------------------------------------------------------------------------------ pass-through hooks */
 
+/* The four non-registration hooks remain pass-through. First 25 invocations include
+ * timing and return codes; later calls are sampled to avoid stressing bluetoothd.
+ * Return values are raw because these private ABIs are not yet characterized. */
 #define BTPS_OBSERVER(FN, IDX)                                                                            \
     static uint64_t FN(uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3,                                \
                        uint64_t a4, uint64_t a5, uint64_t a6, uint64_t a7)                                \
     {                                                                                                     \
         note_call(IDX, a0, a1, a2, a3, a4, a5);                                                           \
+        unsigned n = g_calls[IDX];                                                                         \
+        uint64_t started = (n <= 25u) ? mach_absolute_time() : 0u;                                       \
         uint64_t r = g_orig[IDX] ? g_orig[IDX](a0, a1, a2, a3, a4, a5, a6, a7) : 0;                       \
         note_return(IDX, r);                                                                              \
+        if (started) {                                                                                   \
+            uint64_t us = btps_elapsed_us(started, mach_absolute_time());                                 \
+            BTPSLog("TRACE %s #%u return=%#llx duration_us=%llu (private ABI; raw return)",              \
+                    BTPS_TARGETS[IDX].name, n, (unsigned long long)r, (unsigned long long)us);            \
+            char key[40];                                                                                 \
+            snprintf(key, sizeof key, "diag.ret.%s", BTPS_TARGETS[IDX].name);                          \
+            BTPSSetStatus(key, "call=%u ret=%#llx duration_us=%llu", n,                                 \
+                          (unsigned long long)r, (unsigned long long)us);                                 \
+        }                                                                                                 \
         return r;                                                                                         \
     }
 
-BTPS_OBSERVER(hook_advertise,     BTPS_H_ADVERTISE)       /* logs "Advertising A2DP Source"                        */
-BTPS_OBSERVER(hook_setconfigind,  BTPS_H_SETCONFIGIND)    /* a remote device configured one of our endpoints       */
-BTPS_OBSERVER(hook_accept_sbc,    BTPS_H_ACCEPT_SBC)      /* ... and chose SBC settings                            */
-BTPS_OBSERVER(hook_publish,       BTPS_H_PUBLISH)         /* an audio device was published to the audio system     */
+BTPS_OBSERVER(hook_advertise,     BTPS_H_ADVERTISE)
+BTPS_OBSERVER(hook_setconfigind,  BTPS_H_SETCONFIGIND)
+BTPS_OBSERVER(hook_accept_sbc,    BTPS_H_ACCEPT_SBC)
+BTPS_OBSERVER(hook_publish,       BTPS_H_PUBLISH)
 
 /* AVDTP_RegisterMultipoint: a0=media type, a1=TSEP, a2=caps pointer,
  * a3=number of 16-byte capability records, a4=count, a5=SEID output BYTE.
@@ -253,41 +271,60 @@ static uint64_t hook_register(uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3
     }
 
     /* Always forward all arguments untouched. */
+    const uint64_t started = mach_absolute_time();
     const uint64_t result = g_orig[BTPS_H_REGISTER]
         ? g_orig[BTPS_H_REGISTER](a0, a1, a2, a3, a4, a5, a6, a7) : 0;
+    const uint64_t elapsed_us = btps_elapsed_us(started, mach_absolute_time());
     note_return(BTPS_H_REGISTER, result);
+    if (n <= 25u || result != 0u) {
+        BTPSLog("TRACE AVDTP registration #%u role=%s type=%llu count=%llu numCaps=%llu ret=%#llx (%s) duration_us=%llu",
+                n, btps_endpoint_name((uint32_t)a0, (uint32_t)a1),
+                (unsigned long long)a0, (unsigned long long)a4, (unsigned long long)a3,
+                (unsigned long long)result, btps_registration_result(result),
+                (unsigned long long)elapsed_us);
+        BTPSSetStatus("diag.register_last", "#%u %s ret=%#llx us=%llu", n,
+                      btps_endpoint_name((uint32_t)a0, (uint32_t)a1),
+                      (unsigned long long)result, (unsigned long long)elapsed_us);
+    }
 
     if (seid_readable && btps_peek(a5, &seid_after, sizeof seid_after)) {
-        BTPSLog("v5: native registration call #%u SEID byte %u -> %u",
+        BTPSLog("TRACE registration #%u SEID OUT BYTE before=%u after=%u (only one byte read)",
                 n, (unsigned)seid_before, (unsigned)seid_after);
+    }
+
+    if ((uint32_t)a0 == BTPS_AVDTP_MEDIA_AUDIO && (uint32_t)a1 == 1u) {
+        /* Merely report any native Sink calls; NEVER inject or modify them. */
+        BTPSLogNow("TRACE observed native Audio Sink registration #%u ret=%#llx", n,
+                   (unsigned long long)result);
+        BTPSSetStatus("diag.sink_native_observed", "yes - call #%u", n);
     }
 
     if ((uint32_t)a0 == BTPS_AVDTP_MEDIA_AUDIO &&
         (uint32_t)a1 == BTPS_AVDTP_TSEP_SRC) {
         if ((uint32_t)result == 0u) {
             const unsigned sources = __sync_add_and_fetch(&g_native_source_success, 1u);
-            BTPSSetStatus("v5.native_source_count", "%u", sources);
-            BTPSLog("v5: native A2DP Source #%u accepted (SEID=%u)",
-                    sources, (unsigned)seid_after);
+            BTPSSetStatus("diag.native_source_ok", "%u", sources);
+            if (seid_readable)
+                BTPSLog("TRACE native A2DP Source #%u accepted (SEID=%u)",
+                        sources, (unsigned)seid_after);
+            else
+                BTPSLog("TRACE native A2DP Source #%u accepted; SEID output unreadable", sources);
             if (sources == 6u) {
-                BTPSLogNow("v5: six native Source endpoints registered; "
-                           "six-slot table is occupied; Sink injection skipped");
-                BTPSSetStatus("v5.endpoint_capacity",
-                              "6 native Source endpoints; no verified free slot");
+                BTPSLogNow("MILESTONE all six observed native Source endpoints registered; no Sink inserted");
+                BTPSSetStatus("diag.capacity", "six native Source registrations; free space unverified");
             }
         } else {
-            BTPSLogNow("v5: native Source registration FAILED, status %#llx",
-                       (unsigned long long)result);
-            BTPSSetStatus("v5.native_source_error", "status %#llx",
+            BTPSLogNow("FAIL native Source registration #%u status %#llx (%s)",
+                       n, (unsigned long long)result, btps_registration_result(result));
+            BTPSSetStatus("diag.native_source_error", "call #%u status %#llx", n,
                           (unsigned long long)result);
         }
     }
 
     if (BTPSExperimentsEnabled() && n == 1u) {
-        BTPSLogNow("v5: experiment switch ON, but additional Sink registration "
-                   "is intentionally DISABLED pending endpoint-capacity and SDP ABI proof");
+        BTPSLogNow("WARN legacy experiment preference ON, but Sink injection is fully DISABLED");
         BTPSSetStatus("experiment.sink_register",
-                      "v5 safety gate: disabled (do not overwrite Source SEIDs)");
+                      "v6 safety gate: disabled (no private SDP invocation)");
     }
     return result;
 }
@@ -379,9 +416,13 @@ static void install_hooks(uintptr_t base, int uuid_ok)
     BTPSLogNow("BTPhonoSink %s loaded into %s pid %d (built %s %s)", BTPS_BUILD_TAG, prog, (int)getpid(), __DATE__, __TIME__);
     BTPSSetStatus("build", "%s, %s %s", BTPS_BUILD_TAG, __DATE__, __TIME__);
     BTPSSetStatus("pid", "%d", (int)getpid());
-    BTPSSetStatus("experiments", "%s", BTPSExperimentsEnabled() ? "flag ON (v5 safety gate active; no Sink injection)" : "off (v5 observe-only)");
-    BTPSSetStatus("experiment.sink_register", "v5 disabled: safe native Source observation only");
-    BTPSSetStatus("v5.sdp_sink_0x110b", "NOT advertised (offline research only)");
+    BTPSSetStatus("experiments", "off (v6 forced-passive, stored=%s)", BTPSExperimentsEnabled() ? "ON" : "off");
+    BTPSSetStatus("experiment.sink_register", "disabled - no additional registrations permitted");
+    BTPSSetStatus("diag.sdp_sink_0x110b", "no local Sink SDP publishing implemented; verify externally");
+    BTPSSetStatus("diag.audio_receive", "NOT hooked - media transport/decoder wiring absent");
+    BTPSSetStatus("diag.stage", "observe native registration, advertising, config and publish callbacks");
+    BTPSSetStatus("diag.session_id", "%ld-%d", (long)time(NULL), (int)getpid());
+    BTPSLogNow("SESSION start pid=%d role=observe-only; no SDP/endpoint modifications", (int)getpid());
 
     char exe[512];
     uint32_t exe_size = sizeof exe;

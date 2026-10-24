@@ -74,13 +74,13 @@
 			<key>label</key>
 			<string>Experiments</string>
 			<key>footerText</key>
-			<string>Off: the tweak only watches and logs. On: the next time the Bluetooth daemon starts, it also registers an A2DP sink endpoint next to Apple's source endpoint. Restart the daemon to apply (killall -9 bluetoothd over SSH). Turn it off again if Bluetooth misbehaves.</string>
+			<string>v6 is a passive, detailed diagnostic build: Sink injection is disabled regardless of this legacy switch. Leave it OFF. The app traces capability codecs, assigned SEIDs, private callback returns and timing, plus a session checklist. A2DP Sink SDP advertisement (0x110B) and incoming Bluetooth playback are NOT implemented.</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>label</key>
-			<string>Enable sink experiments</string>
+			<string>Legacy sink experiment flag (inactive)</string>
 			<key>defaults</key>
 			<string>com.apple.bluetooth</string>
 			<key>key</key>

@@ -21,7 +21,7 @@
 #include "BTPSCore.h"
 #include "BTPSShared.h"
 
-#define STATUS_MAX 48
+#define STATUS_MAX 72
 
 typedef struct { char key[40]; char val[160]; } kv_t;
 
@@ -33,6 +33,7 @@ static char              g_file_result[2][96];         /* last write result per 
 static unsigned          g_loaded, g_uuid_ok, g_hooks_ok, g_hooks_bad;
 static uint32_t          g_last_event;
 static int               g_inited;
+static time_t            g_session_started;
 static volatile int      g_dirty;
 static volatile int      g_flush_pending;
 static volatile int      g_experiments;
@@ -53,7 +54,7 @@ static void file_append(int idx, const char *line)
         snprintf(result, sizeof result, "open failed: errno %d (%s)", errno, strerror(errno));
     } else {
         struct stat st;
-        if (fstat(fd, &st) == 0 && st.st_size > 160 * 1024) (void)ftruncate(fd, 0);   /* keep it bounded */
+        if (fstat(fd, &st) == 0 && st.st_size > 512 * 1024) (void)ftruncate(fd, 0);   /* keep it bounded */
         char buf[BTPS_LINE_MAX + 2];
         int n = snprintf(buf, sizeof buf, "%s\n", line);
         if (n > 0 && write(fd, buf, (size_t)n) == n) snprintf(result, sizeof result, "ok");
@@ -181,7 +182,7 @@ static void flush_cb(void *ctx)
 
 static void log_common(int sync, const char *fmt, va_list ap)
 {
-    char msg[190], ts[16], line[BTPS_LINE_MAX];
+    char msg[265], ts[16], line[BTPS_LINE_MAX];
     vsnprintf(msg, sizeof msg, fmt, ap);
     btps_fmt_time(ts, sizeof ts);
     snprintf(line, sizeof line, "%s %s", ts, msg);
@@ -200,8 +201,7 @@ static void log_common(int sync, const char *fmt, va_list ap)
     } else {
         char *copy = strdup(line);
         if (copy) dispatch_async_f(g_queue, copy, async_write_line);
-        if (!g_flush_pending) {                       /* coalesce: at most one preferences write per second */
-            g_flush_pending = 1;
+        if (!__sync_lock_test_and_set(&g_flush_pending, 1)) {  /* coalesce across daemon threads */
             dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, 1LL * NSEC_PER_SEC), g_queue, NULL, flush_cb);
         }
     }
@@ -302,12 +302,33 @@ static void self_test(void *ctx)
     g_dirty = 1;
 }
 
+/* A callback-free period must not look like a dead daemon. A lightweight
+ * heartbeat every 60s marks the active session without touching Bluetooth. */
+static void heartbeat_cb(void *ctx)
+{
+    (void)ctx;
+    unsigned long long seq;
+    pthread_mutex_lock(&g_lock);
+    seq = btps_ring_seq(&g_ring);
+    pthread_mutex_unlock(&g_lock);
+    time_t now = time(NULL);
+    unsigned long uptime_s = now >= g_session_started ?
+        (unsigned long)(now - g_session_started) : 0ul;
+    BTPSSetStatus("diag.heartbeat", "pid=%d uptime_s=%lu log_seq=%llu",
+                  (int)getpid(), uptime_s, seq);
+    BTPSLog("HEARTBEAT bluetoothd pid=%d uptime_s=%lu log_seq=%llu (passive)",
+            (int)getpid(), uptime_s, seq);
+    publish_state();
+    dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, 60LL * NSEC_PER_SEC), g_queue, NULL, heartbeat_cb);
+}
+
 static void poll_cb(void *ctx)
 {
     (void)ctx;
     g_experiments = read_experiments_flag();
     publish_state();
     dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, 10LL * NSEC_PER_SEC), g_queue, NULL, poll_cb);
+    dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, 60LL * NSEC_PER_SEC), g_queue, NULL, heartbeat_cb);
 }
 
 void BTPSLogInit(void)
@@ -315,6 +336,7 @@ void BTPSLogInit(void)
     pthread_mutex_lock(&g_lock);
     if (g_inited) { pthread_mutex_unlock(&g_lock); return; }
     btps_ring_init(&g_ring);
+    g_session_started = time(NULL);
     g_inited = 1;
     pthread_mutex_unlock(&g_lock);
 
@@ -324,4 +346,5 @@ void BTPSLogInit(void)
 
     dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, 2LL * NSEC_PER_SEC), g_queue, NULL, self_test);
     dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, 10LL * NSEC_PER_SEC), g_queue, NULL, poll_cb);
+    dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, 60LL * NSEC_PER_SEC), g_queue, NULL, heartbeat_cb);
 }
