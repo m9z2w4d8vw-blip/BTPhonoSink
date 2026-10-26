@@ -3,6 +3,7 @@
 // it does not change the bluetoothd tweak, its sandbox or its runtime behavior.
 #import "BTPSLogViewController.h"
 #import "BTPSLogReader.h"
+#import "BTPSAudioProbe.h"
 
 @interface BTPSLogViewController () <UIDocumentPickerDelegate>
 @end
@@ -11,6 +12,7 @@
     UITextView *_textView;
     NSTimer *_timer;
     NSURL *_pendingExportURL;
+    BTPSAudioProbe *_audioProbe;
 }
 
 - (void)viewDidLoad
@@ -40,12 +42,28 @@
     [exportButton addTarget:self action:@selector(exportToFiles) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:exportButton];
 
+    UIStackView *actions = [[UIStackView alloc] initWithFrame:CGRectZero];
+    actions.axis = UILayoutConstraintAxisVertical;
+    actions.spacing = 6.0;
+    actions.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:actions];
+    UIButton *checkButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    [checkButton setTitle:@"Verify Test Checklist" forState:UIControlStateNormal];
+    [checkButton addTarget:self action:@selector(showChecklist) forControlEvents:UIControlEventTouchUpInside];
+    [actions addArrangedSubview:checkButton];
+    UIButton *audioButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    [audioButton setTitle:@"Test iOS Audio Output (440 Hz)" forState:UIControlStateNormal];
+    [audioButton addTarget:self action:@selector(confirmAudioTest) forControlEvents:UIControlEventTouchUpInside];
+    [actions addArrangedSubview:audioButton];
     UILayoutGuide *safe = self.view.safeAreaLayoutGuide;
     [NSLayoutConstraint activateConstraints:@[
         [_textView.topAnchor constraintEqualToAnchor:safe.topAnchor],
         [_textView.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor],
         [_textView.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor],
-        [_textView.bottomAnchor constraintEqualToAnchor:exportButton.topAnchor constant:-6.0],
+        [_textView.bottomAnchor constraintEqualToAnchor:actions.topAnchor constant:-6.0],
+        [actions.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:12.0],
+        [actions.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-12.0],
+        [actions.bottomAnchor constraintEqualToAnchor:exportButton.topAnchor constant:-6.0],
         [exportButton.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:12.0],
         [exportButton.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-12.0],
         [exportButton.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor constant:-12.0],
@@ -72,6 +90,7 @@
     [super viewWillDisappear:animated];
     [_timer invalidate];
     _timer = nil;
+    [_audioProbe stop];
 }
 
 - (void)reload
@@ -166,6 +185,57 @@
 - (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller
 {
     [self cleanupPendingExport];
+}
+
+
+#pragma mark - Guided checks and local output test (Preferences process only)
+
+- (void)showChecklist
+{
+    NSString *log = [[BTPSLogReader shared] fullText];
+    BOOL correctBuild = [log containsString:@"build: v7.2-sdp-checklist"];
+    BOOL hooks = [log containsString:@"hooks installed: 5 / 5"];
+    BOOL sources = [log containsString:@"diag.native_source_ok: 6"];
+    BOOL legacyOff = [log containsString:@"experiments: off (v7 forced-passive, stored=off)"];
+    BOOL probe = [log containsString:@"diag.sdp_probe: installed"];
+    BOOL sdpsource = [log containsString:@"diag.sdp_source_seen: yes"];
+    BOOL sbc = [log containsString:@"seen.SetConfig_accept_SBC:"] && ![log containsString:@"seen.SetConfig_accept_SBC: 0 call(s)"];
+    NSString *check = [NSString stringWithFormat:
+       @"%@ v7.2 is running\n%@ Five original hooks installed\n%@ Six original Source endpoints\n%@ Legacy experiment is OFF\n%@ Optional SDP observer installed\n%@ Audio Source SDP record observed\n%@ SBC negotiation callback seen\n\nMANUAL: Confirm headphones play after reconnecting.\nMANUAL: Export and send the log using Save Log to iCloud Drive.\n\nThe 440 Hz output test is local to Settings; it does NOT mean Windows audio can reach this phone.",
+       correctBuild ? @"PASS" : @"CHECK", hooks ? @"PASS" : @"CHECK",
+       sources ? @"PASS" : @"CHECK", legacyOff ? @"PASS" : @"CHECK",
+       probe ? @"PASS" : @"NOT ENABLED", sdpsource ? @"PASS" : @"NOT SEEN",
+       sbc ? @"PASS" : @"NOT YET SEEN"];
+    [self showMessage:check title:@"BTPhonoSink test checklist"];
+}
+
+- (void)confirmAudioTest
+{
+    UIAlertController *ask = [UIAlertController alertControllerWithTitle:@"Local audio output test"
+        message:@"Disconnect Bluetooth headphones first if you want the tone to play through the iPhone speaker. This plays a short 440 Hz tone from Settings, NOT from bluetoothd and NOT from a Bluetooth Source device."
+        preferredStyle:UIAlertControllerStyleAlert];
+    [ask addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    __weak __typeof(self) weakSelf = self;
+    [ask addAction:[UIAlertAction actionWithTitle:@"Play test tone" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        [weakSelf playLocalAudioTest];
+    }]];
+    [self presentViewController:ask animated:YES completion:nil];
+}
+
+- (void)playLocalAudioTest
+{
+    _audioProbe = [[BTPSAudioProbe alloc] init];
+    __weak __typeof(self) weakSelf = self;
+    _audioProbe.completion = ^(NSString *status) {
+        [[NSUserDefaults standardUserDefaults] setObject:status forKey:@"BTPSAudioTestLastResult"];
+        [weakSelf showMessage:status title:@"Audio output test"];
+    };
+    NSError *error = nil;
+    if (![_audioProbe startWithError:&error]) {
+        NSString *message = [NSString stringWithFormat:@"Audio output test failed: %@", error.localizedDescription ?: @"unknown error"];
+        [[NSUserDefaults standardUserDefaults] setObject:message forKey:@"BTPSAudioTestLastResult"];
+        [self showMessage:message title:@"Audio output test"];
+    }
 }
 
 @end

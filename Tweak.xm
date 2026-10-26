@@ -64,7 +64,7 @@
 #include "BTPSLog.h"
 #include "BTPSShared.h"
 
-#define BTPS_BUILD_TAG "v7.1-sdp-media-foundation"
+#define BTPS_BUILD_TAG "v7.2-sdp-checklist"
 
 /* AVDTP constants, used for native Source registration diagnostics */
 #define BTPS_AVDTP_TSEP_SRC 0u
@@ -346,6 +346,8 @@ static const uint32_t BTPS_SDP_RECORD_ADD_SIG[4] = {
 typedef uint64_t (*btps_sdp_fn_t)(uint64_t, uint64_t);
 static btps_sdp_fn_t g_sdp_orig = NULL;
 static volatile unsigned g_sdp_calls = 0;
+static volatile unsigned g_sdp_source_seen = 0;
+static volatile unsigned g_sdp_sink_seen = 0;
 
 static int btps_sdp_probe_requested(void)
 {
@@ -415,9 +417,34 @@ static void btps_log_sdp_attributes(unsigned n, const char *which, uint64_t addr
             info, count > limit ? " ..." : "");
 }
 
+/* Minimal, bounded extraction of the same class candidate we already log.
+ * It is a private in-memory hint, NOT proof of remote SDP discoverability. */
+static uint16_t btps_sdp_class_hint(uint64_t descriptor)
+{
+    uint8_t lists[32];
+    if (!btps_peek(descriptor, lists, sizeof lists)) return 0;
+    uint64_t list = btps_load_u64(lists);
+    uint16_t count = btps_load_u16(lists + 8);
+    if (!list || count > 128u) return 0;
+    unsigned n = count < 32u ? count : 32u;
+    for (unsigned i = 0; i < n; ++i) {
+        if ((uint64_t)i > (UINT64_MAX - list) / 24u) return 0;
+        uint8_t attr[24];
+        if (!btps_peek(list + (uint64_t)i * 24u, attr, sizeof attr)) return 0;
+        if (btps_load_u16(attr) == 1u && attr[8] == 6u) {
+            uint64_t ptr = btps_load_u64(attr + 16);
+            uint16_t service = 0;
+            if (ptr <= UINT64_MAX - 8u && btps_peek(ptr + 8u, &service, sizeof service))
+                return service;
+        }
+    }
+    return 0;
+}
+
 static uint64_t hook_sdp_add_record(uint64_t descriptor, uint64_t handle_out)
 {
     unsigned n = __sync_add_and_fetch(&g_sdp_calls, 1u);
+    const uint16_t service_hint = btps_sdp_class_hint(descriptor);
     uint32_t handle_before = 0, handle_after = 0;
     const int handle_readable = handle_out && btps_peek(handle_out, &handle_before, sizeof handle_before);
     const int sample = n <= 24u || (n % 100u) == 0u;
@@ -439,6 +466,14 @@ static uint64_t hook_sdp_add_record(uint64_t descriptor, uint64_t handle_out)
     }
     /* The single and only invocation of the original routine. */
     uint64_t ret = g_sdp_orig ? g_sdp_orig(descriptor, handle_out) : 0xFFFFFFFFull;
+    if (ret == 0 && service_hint == 0x110au) {
+        unsigned seen = __sync_add_and_fetch(&g_sdp_source_seen, 1u);
+        BTPSSetStatus("diag.sdp_source_seen", "yes - local Source record-add succeeded (%u)", seen);
+    } else if (ret == 0 && service_hint == 0x110bu) {
+        unsigned seen = __sync_add_and_fetch(&g_sdp_sink_seen, 1u);
+        BTPSSetStatus("diag.sdp_sink_candidate_seen", "local 0x110B record-add observed (%u); remote unverified", seen);
+        BTPSLogNow("SDP_PROBE NOTE: local 0x110B class candidate added; Windows SDP visibility NOT verified");
+    }
     if (sample) {
         int after_readable = handle_out && btps_peek(handle_out, &handle_after, sizeof handle_after);
         BTPSLog("SDP_PROBE #%u exit ret=%#llx out_handle=%s before=0x%08x after=0x%08x",

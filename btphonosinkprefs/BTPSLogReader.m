@@ -185,6 +185,10 @@ static NSArray<NSString *> *ReadFileLines(NSString *path, NSString **note)
         if (t && age > 180)
             [out appendFormat:@"WARNING: last daemon event is %.0f seconds old; status may be stale.\n", age];
     }
+    NSString *localTest = [[NSUserDefaults standardUserDefaults] stringForKey:@"BTPSAudioTestLastResult"];
+    [out appendFormat:@"\n== SETTINGS PROCESS AUDIO SELF-TEST ==\n%@\n",
+                      localTest ?: @"Not run on this installation. Use the Debug log audio test button."];
+    [out appendString:@"This test runs in Preferences.app; it cannot verify receiving Bluetooth audio.\n"];
     [out appendString:@"\n== STATUS (written by the tweak inside the daemon) ==\n"];
     if (s.status.count == 0) {
         [out appendString:@"(nothing yet)\n"];

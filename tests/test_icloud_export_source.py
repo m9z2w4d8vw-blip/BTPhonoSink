@@ -15,7 +15,8 @@ class ICloudExportTests(unittest.TestCase):
         self.assertIn('Save Log to iCloud Drive', UI)
         self.assertIn('action:@selector(exportToFiles)', UI)
         self.assertIn('[self.view addSubview:exportButton]', UI)
-        self.assertIn('[_textView.bottomAnchor constraintEqualToAnchor:exportButton.topAnchor', UI)
+        self.assertIn('[_textView.bottomAnchor constraintEqualToAnchor:actions.topAnchor', UI)
+        self.assertIn('[actions.bottomAnchor constraintEqualToAnchor:exportButton.topAnchor', UI)
 
     def test_full_report_is_used(self):
         self.assertIn('[[BTPSLogReader shared] fullText]', UI)

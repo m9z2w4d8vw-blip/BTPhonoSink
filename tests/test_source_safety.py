@@ -7,7 +7,7 @@ SOURCE=(ROOT/'Tweak.xm').read_text(encoding='utf-8')
 
 class SourceSafetyTests(unittest.TestCase):
     def test_v7_tag(self):
-        self.assertIn('#define BTPS_BUILD_TAG "v7.1-sdp-media-foundation"', SOURCE)
+        self.assertIn('#define BTPS_BUILD_TAG "v7.2-sdp-checklist"', SOURCE)
     def test_original_registration_called_once(self):
         hook=SOURCE.split('static uint64_t hook_register(',1)[1].split('/* ------------------------------------------------------------------------------------------------ installing */',1)[0]
         self.assertEqual(hook.count('g_orig[BTPS_H_REGISTER]('),1)

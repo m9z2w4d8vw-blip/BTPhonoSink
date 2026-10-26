@@ -10,8 +10,8 @@ include $(THEOS)/makefiles/common.mk
 
 BUNDLE_NAME = BTPhonoSinkPrefs
 
-BTPhonoSinkPrefs_FILES      = BTPSRootListController.m BTPSLogViewController.m BTPSLogReader.m
-BTPhonoSinkPrefs_FRAMEWORKS = UIKit Foundation CoreFoundation
+BTPhonoSinkPrefs_FILES      = BTPSRootListController.m BTPSLogViewController.m BTPSLogReader.m BTPSAudioProbe.m
+BTPhonoSinkPrefs_FRAMEWORKS = UIKit Foundation CoreFoundation AVFoundation
 BTPhonoSinkPrefs_CFLAGS     = -fobjc-arc -I..
 # Preferences.framework is private and not in the Xcode SDK: resolve PSListController at runtime instead of link time.
 BTPhonoSinkPrefs_LDFLAGS    = -Wl,-undefined,dynamic_lookup
