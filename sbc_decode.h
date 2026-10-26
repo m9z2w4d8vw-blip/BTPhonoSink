@@ -38,8 +38,8 @@ typedef struct {
 } sbc_frame_header_t;
 
 /*
- * Parse the header of one SBC frame (first 3 bytes starting at syncword).
- * Returns 0 on success, -1 if syncword mismatch.
+ * Parse the 4-byte SBC frame header (syncword, fields, bitpool, CRC).
+ * Returns 0 on success, -1 if truncated, invalid pointer, or syncword mismatch.
  */
 int sbc_parse_header(const uint8_t *buf, size_t len, sbc_frame_header_t *hdr);
 

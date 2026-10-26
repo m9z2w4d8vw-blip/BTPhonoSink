@@ -1,6 +1,9 @@
 #include "sbc_decode.h"
 #include <string.h>
 #include <math.h>
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 #include <stdlib.h>
 
 /* -----------------------------------------------------------------------
@@ -80,10 +83,6 @@ static uint32_t bs_read(bs_t *bs, int nbits) {
         if (--bs->bit_pos < 0) { bs->bit_pos = 7; bs->byte_pos++; }
     }
     return val;
-}
-
-static size_t bs_byte_pos(const bs_t *bs) {
-    return bs->byte_pos + (bs->bit_pos < 7 ? 1 : 0);
 }
 
 /* -----------------------------------------------------------------------
@@ -224,7 +223,7 @@ static void calc_bits(const sbc_frame_header_t *hdr,
  * ----------------------------------------------------------------------- */
 int sbc_parse_header(const uint8_t *buf, size_t len, sbc_frame_header_t *hdr)
 {
-    if (len < 3 || buf[0] != SBC_SYNCWORD) return -1;
+    if (!buf || !hdr || len < 4 || buf[0] != SBC_SYNCWORD) return -1;
 
     static const uint8_t block_tbl[4] = {4, 8, 12, 16};
     static const uint8_t sb_tbl[2]    = {4, 8};
@@ -246,20 +245,16 @@ int sbc_parse_header(const uint8_t *buf, size_t len, sbc_frame_header_t *hdr)
      *              + ceil(nblocks * bitpool * (joint_bit + nchannels) / 8)
      * Exact formula from spec §12.9 */
     int join_bit = (hdr->channel_mode == SBC_MODE_JOINT) ? 1 : 0;
-    int header_bytes = 3;
+    int header_bytes = 4;  /* syncword, codec fields, bitpool, CRC */
     int sf_bytes = (4 * hdr->subbands * hdr->nchannels + 7) / 8;
 
     int samples_bits;
     if (hdr->channel_mode == SBC_MODE_JOINT)
-        samples_bits = hdr->blocks * (hdr->subbands + hdr->bitpool);
+        samples_bits = hdr->blocks * hdr->bitpool + hdr->subbands; /* one join bitmap per frame */
     else if (hdr->channel_mode == SBC_MODE_DUAL)
         samples_bits = hdr->blocks * hdr->nchannels * hdr->bitpool;
     else
         samples_bits = hdr->blocks * hdr->bitpool;
-
-    /* Additional bit for joint stereo join information per block */
-    if (hdr->channel_mode == SBC_MODE_JOINT)
-        samples_bits += hdr->subbands; /* join flags per subband */
 
     hdr->frame_length = (uint16_t)(header_bytes + sf_bytes +
                                    (samples_bits + 7) / 8);
@@ -271,12 +266,12 @@ int sbc_decode_frame(const uint8_t *buf, size_t buf_len,
                      const sbc_frame_header_t *hdr,
                      int16_t *pcm_out, int *pcm_samples)
 {
-    if (buf_len < hdr->frame_length) return -1;
+    if (!buf || !hdr || !pcm_out || !pcm_samples || buf_len < hdr->frame_length) return -1;
 
     int M = hdr->subbands, N = hdr->nchannels;
     bs_t bs;
     bs_init(&bs, buf, hdr->frame_length);
-    bs_read(&bs, 24); /* skip 3-byte header already parsed */
+    bs_read(&bs, 32); /* skip complete 4-byte SBC header including CRC */
 
     /* Joint stereo flags */
     uint8_t join[8] = {0};

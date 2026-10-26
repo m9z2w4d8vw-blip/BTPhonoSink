@@ -7,7 +7,7 @@
 #define LOG_SINK(fmt, ...) os_log(OS_LOG_DEFAULT, "[BTPhonoSink] " fmt, ##__VA_ARGS__)
 
 /* -------------------------------------------------------------------------
- * Lock-free ring buffer for decoded PCM
+ * Mutex-protected ring buffer for decoded PCM
  * Holds up to 8192 stereo int16 samples (32KB) to smooth jitter.
  * ------------------------------------------------------------------------- */
 #define RING_SAMPLES (8192 * 2)   /* stereo interleaved */
@@ -26,17 +26,21 @@ static void ring_reset(void) {
     pthread_mutex_unlock(&g_ring_lock);
 }
 
-/* Returns samples written (may be less than count if ring is full). */
+/* Returns all samples written or zero (no partial packets). */
 static int ring_write(const int16_t *in, int count) {
     pthread_mutex_lock(&g_ring_lock);
     int avail = (int)(RING_SAMPLES - (g_ring.write_pos - g_ring.read_pos));
     if (avail < 0) avail = 0;
-    int n = (count < avail) ? count : avail;
-    for (int i = 0; i < n; i++)
+    /* All or nothing: never enqueue only part of an SBC packet. */
+    if (count > avail) {
+        pthread_mutex_unlock(&g_ring_lock);
+        return 0;
+    }
+    for (int i = 0; i < count; i++)
         g_ring.buf[(g_ring.write_pos + i) % RING_SAMPLES] = in[i];
-    g_ring.write_pos += n;
+    g_ring.write_pos += (uint32_t)count;
     pthread_mutex_unlock(&g_ring_lock);
-    return n;
+    return count;
 }
 
 /* Returns samples read (may be less than count if ring is empty). */
@@ -63,7 +67,7 @@ static uint8_t             g_nchannels    = 2;
 static int                 g_running      = 0;
 
 /* decode scratch buffer – enough for one large A2DP packet (16 blocks × 8sb × 2ch) */
-#define DECODE_SCRATCH (16 * 8 * 2 * 8)   /* 2048 samples max per call */
+#define DECODE_SCRATCH (BTPS_MEDIA_MAX_FRAMES * 16 * 8 * 2) /* worst case 15 SBC frames */
 static int16_t g_decode_scratch[DECODE_SCRATCH];
 
 void btphonosink_on_media_payload(const uint8_t *payload, size_t payload_len)
@@ -85,6 +89,23 @@ void btphonosink_on_media_payload(const uint8_t *payload, size_t payload_len)
     if (samples <= 0) return;
 
     ring_write(g_decode_scratch, samples);
+}
+
+/* Integration point for the future live RTP media receiver. The input has to be a
+ * COMPLETE A2DP RTP packet; do not strip a fixed 12-byte header, since CSRCs,
+ * RTP extension data and padding can change its length. No daemon hook invokes this
+ * until live Sink negotiation and audio-output IPC are implemented. */
+int btphonosink_on_rtp_packet(const uint8_t *packet, size_t packet_len)
+{
+    if (!g_running) return BTPS_MEDIA_INVALID;
+    size_t count = 0;
+    btps_media_result_t rc = btps_media_decode_rtp_sbc(packet, packet_len,
+                                                        g_decode_scratch,
+                                                        DECODE_SCRATCH, &count, NULL);
+    if (rc != BTPS_MEDIA_OK) return (int)rc;
+    if (count == 0 || ring_write(g_decode_scratch, (int)count) != (int)count)
+        return BTPS_MEDIA_BACKPRESSURE;
+    return BTPS_MEDIA_OK;
 }
 
 static void engine_start_internal(void)

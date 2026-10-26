@@ -44,6 +44,8 @@
  * v5: correctly observe 1-byte SEID output; do not mirror Sink endpoints or overwrite Source SEIDs.
  * v6: decode the observed codec at byte +2, trace return values and timings and include
  *      a session-specific export. SDP 0x110B and media receive remain NOT implemented.
+ * v7: optional, OFF-BY-DEFAULT pass-through instrumentation for existing SDP record additions.
+ *      This hook never adds, deletes or modifies an SDP record and does not allocate an AVDTP SEP.
  */
 #include <CoreFoundation/CoreFoundation.h>
 #include <mach-o/dyld.h>
@@ -62,7 +64,7 @@
 #include "BTPSLog.h"
 #include "BTPSShared.h"
 
-#define BTPS_BUILD_TAG "v6-detailed-observe"
+#define BTPS_BUILD_TAG "v7.1-sdp-media-foundation"
 
 /* AVDTP constants, used for native Source registration diagnostics */
 #define BTPS_AVDTP_TSEP_SRC 0u
@@ -328,6 +330,162 @@ static uint64_t hook_register(uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3
     }
     return result;
 }
+/* --------------------------------------------------------------------------------------- v7 SDP observer
+ * Entry verified in this exact 10,196,720-byte bluetoothd image at image+0x1e8e78.
+ * The function has 20 direct call sites. Disassembly establishes that x0 is a two-list
+ * descriptor (pointer,count at +0/+8 and pointer,count at +0x10/+0x18), and x1 is a
+ * nullable 32-bit record-handle out pointer. This is NOT a public, stable ABI.
+ *
+ * Important: this hook is opt-in and does no mutation. In case a private ABI assumption
+ * is wrong, the five normal diagnostic hooks still operate with this observer OFF.
+ */
+#define BTPS_SDP_RECORD_ADD_ENTRY 0x001e8e78ul
+static const uint32_t BTPS_SDP_RECORD_ADD_SIG[4] = {
+    0xd503237fu, 0xa9bd57f6u, 0xa9014ff4u, 0xa9027bfdu
+};
+typedef uint64_t (*btps_sdp_fn_t)(uint64_t, uint64_t);
+static btps_sdp_fn_t g_sdp_orig = NULL;
+static volatile unsigned g_sdp_calls = 0;
+
+static int btps_sdp_probe_requested(void)
+{
+    /* Read the exact current-user domain used by the Preferences pane. */
+    CFPropertyListRef v = CFPreferencesCopyAppValue(CFSTR(BTPS_KEY_SDP_PROBE), CFSTR(BTPS_PREFS_DOMAIN));
+    int on = v && CFGetTypeID(v) == CFBooleanGetTypeID() && CFBooleanGetValue((CFBooleanRef)v);
+    if (v) CFRelease(v);
+    return on;
+}
+
+static uint16_t btps_load_u16(const uint8_t *b)
+{
+    uint16_t v = 0;
+    memcpy(&v, b, sizeof v);
+    return v;
+}
+
+static uint64_t btps_load_u64(const uint8_t *b)
+{
+    uint64_t v = 0;
+    memcpy(&v, b, sizeof v);
+    return v;
+}
+
+static void btps_log_sdp_attributes(unsigned n, const char *which, uint64_t address, unsigned count)
+{
+    /* Inspect at most eight 24-byte entries in a compact, bounded summary.
+     * This avoids overflowing the 300-line Settings ring during SDP startup. */
+    if (count == 0u) {
+        BTPSLog("SDP_PROBE #%u %s attrs=none", n, which);
+        return;
+    }
+    if (!address || count > 128u) {
+        BTPSLog("SDP_PROBE #%u %s attrs=unreadable-or-implausible count=%u", n, which, count);
+        return;
+    }
+    unsigned limit = count < 8u ? count : 8u;
+    char info[150] = "";
+    size_t used = 0;
+    for (unsigned i = 0; i < limit; i++) {
+        uint8_t attr[24];
+        if (i > (UINT64_MAX - address) / 24u || !btps_peek(address + (uint64_t)i * 24u, attr, sizeof attr)) {
+            (void)snprintf(info + used, sizeof info - used, " [#%u unreadable]", i);
+            break;
+        }
+        /* Inspected function reads a 16-bit attribute ID at element +0 and a
+         * one-byte element type at +8. Do not assume more about the private format. */
+        unsigned attribute_id = (unsigned)btps_load_u16(attr);
+        unsigned element_type = (unsigned)attr[8];
+        int added = snprintf(info + used, sizeof info - used, " %04x:t%02x", attribute_id, element_type);
+        if (added < 0) break;
+        if ((size_t)added >= sizeof info - used) { used = sizeof info - 1u; break; }
+        used += (size_t)added;
+        if (attribute_id == 1u && element_type == 6u) {
+            /* Matched the precise sequence in the record-add function:
+             * list[i].value (+16), then candidate 16-bit class at value+8.
+             * Observing 0x110A here is suggestive, not independent remote proof. */
+            uint64_t element_data = btps_load_u64(attr + 16);
+            uint16_t candidate_class = 0;
+            if (element_data <= UINT64_MAX - 8u &&
+                btps_peek(element_data + 8u, &candidate_class, sizeof candidate_class))
+                BTPSLog("SDP_PROBE #%u %s candidate_class16=0x%04x (private ABI)",
+                        n, which, (unsigned)candidate_class);
+        }
+    }
+    BTPSLog("SDP_PROBE #%u %s attr_ids(type) count=%u first%u:%s%s", n, which, count, limit,
+            info, count > limit ? " ..." : "");
+}
+
+static uint64_t hook_sdp_add_record(uint64_t descriptor, uint64_t handle_out)
+{
+    unsigned n = __sync_add_and_fetch(&g_sdp_calls, 1u);
+    uint32_t handle_before = 0, handle_after = 0;
+    const int handle_readable = handle_out && btps_peek(handle_out, &handle_before, sizeof handle_before);
+    const int sample = n <= 24u || (n % 100u) == 0u;
+    if (sample) {
+        uint8_t header[32];
+        if (btps_peek(descriptor, header, sizeof header)) {
+            uint64_t first_ptr = btps_load_u64(header);
+            uint16_t first_count = btps_load_u16(header + 8);
+            uint64_t second_ptr = btps_load_u64(header + 16);
+            uint16_t second_count = btps_load_u16(header + 24);
+            BTPSLog("SDP_PROBE #%u enter listA.count=%u listB.count=%u handle_out=%s",
+                    n, (unsigned)first_count, (unsigned)second_count,
+                    handle_readable ? "readable" : "unavailable");
+            btps_log_sdp_attributes(n, "listA", first_ptr, first_count);
+            btps_log_sdp_attributes(n, "listB", second_ptr, second_count);
+        } else {
+            BTPSLog("SDP_PROBE #%u descriptor unreadable; forwarding untouched", n);
+        }
+    }
+    /* The single and only invocation of the original routine. */
+    uint64_t ret = g_sdp_orig ? g_sdp_orig(descriptor, handle_out) : 0xFFFFFFFFull;
+    if (sample) {
+        int after_readable = handle_out && btps_peek(handle_out, &handle_after, sizeof handle_after);
+        BTPSLog("SDP_PROBE #%u exit ret=%#llx out_handle=%s before=0x%08x after=0x%08x",
+                n, (unsigned long long)ret, after_readable ? "readable" : "unavailable",
+                (unsigned)handle_before, (unsigned)handle_after);
+        BTPSSetStatus("diag.sdp_probe_calls", "%u call(s), last return %#llx", n,
+                      (unsigned long long)ret);
+    }
+    return ret;
+}
+
+static void install_optional_sdp_probe(uintptr_t base, int uuid_ok)
+{
+    if (!btps_sdp_probe_requested()) {
+        BTPSSetStatus("diag.sdp_probe", "OFF (default); no SDP hook installed");
+        BTPSLogNow("SDP_PROBE disabled by default; enable separately in Settings, then restart bluetoothd once");
+        return;
+    }
+    if (!uuid_ok) {
+        BTPSSetStatus("diag.sdp_probe", "REFUSED: exact bluetoothd UUID mismatch");
+        return;
+    }
+    const uintptr_t entry = base + BTPS_SDP_RECORD_ADD_ENTRY;
+    uint32_t current[4] = {0};
+    if (!btps_peek(entry, current, sizeof current) ||
+        memcmp(current, BTPS_SDP_RECORD_ADD_SIG, sizeof current) != 0) {
+        BTPSSetStatus("diag.sdp_probe", "REFUSED: SDP record-add code signature mismatch");
+        BTPSLogNow("SDP_PROBE REFUSED: unexpected code at image+0x1e8e78");
+        return;
+    }
+    if (!g_orig[BTPS_H_REGISTER] || !g_orig[BTPS_H_ADVERTISE]) {
+        BTPSSetStatus("diag.sdp_probe", "REFUSED: baseline hooks not both installed");
+        return;
+    }
+    void *orig = NULL;
+    BTPSLogNow("SDP_PROBE installing OPTIONAL observer at image+0x1e8e78 (pass-through only)");
+    MSHookFunction((void *)entry, (void *)hook_sdp_add_record, &orig);
+    if (!orig) {
+        BTPSSetStatus("diag.sdp_probe", "FAILED to install; restart with toggle OFF");
+        BTPSLogNow("SDP_PROBE FAILED: no trampoline from hook engine");
+        return;
+    }
+    g_sdp_orig = (btps_sdp_fn_t)orig;
+    BTPSSetStatus("diag.sdp_probe", "installed (optional 6th hook, non-mutating)");
+    BTPSLogNow("SDP_PROBE optional observer installed; SDP records/SEPs will NOT be added");
+}
+
 /* ------------------------------------------------------------------------------------------------ installing */
 
 static void install_hooks(uintptr_t base, int uuid_ok)
@@ -416,11 +574,11 @@ static void install_hooks(uintptr_t base, int uuid_ok)
     BTPSLogNow("BTPhonoSink %s loaded into %s pid %d (built %s %s)", BTPS_BUILD_TAG, prog, (int)getpid(), __DATE__, __TIME__);
     BTPSSetStatus("build", "%s, %s %s", BTPS_BUILD_TAG, __DATE__, __TIME__);
     BTPSSetStatus("pid", "%d", (int)getpid());
-    BTPSSetStatus("experiments", "off (v6 forced-passive, stored=%s)", BTPSExperimentsEnabled() ? "ON" : "off");
+    BTPSSetStatus("experiments", "off (v7 forced-passive, stored=%s)", BTPSExperimentsEnabled() ? "ON" : "off");
     BTPSSetStatus("experiment.sink_register", "disabled - no additional registrations permitted");
     BTPSSetStatus("diag.sdp_sink_0x110b", "no local Sink SDP publishing implemented; verify externally");
     BTPSSetStatus("diag.audio_receive", "NOT hooked - media transport/decoder wiring absent");
-    BTPSSetStatus("diag.stage", "observe native registration, advertising, config and publish callbacks");
+    BTPSSetStatus("diag.stage", "observe native registration, advertising, configuration, SDP (optional) and publish callbacks");
     BTPSSetStatus("diag.session_id", "%ld-%d", (long)time(NULL), (int)getpid());
     BTPSLogNow("SESSION start pid=%d role=observe-only; no SDP/endpoint modifications", (int)getpid());
 
@@ -453,4 +611,5 @@ static void install_hooks(uintptr_t base, int uuid_ok)
     BTPSSetStatus("image.expected", "%s", BTPS_BUILD_UUID);
 
     install_hooks((uintptr_t)mh, uuid_ok);
+    install_optional_sdp_probe((uintptr_t)mh, uuid_ok);
 }
