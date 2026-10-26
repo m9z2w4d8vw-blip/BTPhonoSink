@@ -25,3 +25,17 @@ int btps_ipc_validate(const uint8_t h[BTPS_IPC_HEADER_SIZE],uint32_t token,const
     if (r32(h+8)!=BTPS_IPC_SAMPLERATE || r32(h+12)!=BTPS_IPC_FRAMES || r32(h+16)!=token) return 0;
     return btps_ipc_crc32(pcm,n)==r32(h+20);
 }
+
+void btps_ipc_encode_daemon_v74(uint8_t h[BTPS_IPC_V74_HEADER_SIZE],uint32_t token,uint32_t crc) {
+    btps_ipc_encode(h,token,crc);
+    w16(h+4,BTPS_IPC_V74_VERSION);
+    memcpy(h+BTPS_IPC_HEADER_SIZE,"BTD4",4);
+}
+int btps_ipc_validate_daemon_v74(const uint8_t h[BTPS_IPC_V74_HEADER_SIZE],uint32_t token,
+                                 const uint8_t *pcm,size_t n) {
+    if(!h || !pcm || n!=BTPS_IPC_PCM_BYTES) return 0;
+    if(memcmp(h,"BTPS",4)!=0 || r16(h+4)!=BTPS_IPC_V74_VERSION || r16(h+6)!=1u) return 0;
+    if(memcmp(h+BTPS_IPC_HEADER_SIZE,"BTD4",4)!=0) return 0;
+    if(r32(h+8)!=BTPS_IPC_SAMPLERATE || r32(h+12)!=BTPS_IPC_FRAMES || r32(h+16)!=token) return 0;
+    return btps_ipc_crc32(pcm,n)==r32(h+20);
+}

@@ -74,7 +74,7 @@
 			<key>label</key>
 			<string>Experiments</string>
 			<key>footerText</key>
-			<string>v7.3 preserves the passive v6 baseline: Sink injection is disabled regardless of this legacy switch. Leave it OFF. The app traces capability codecs, assigned SEIDs, private callback returns and timing, plus a session checklist. A2DP Sink SDP advertisement (0x110B) and incoming Bluetooth playback are NOT implemented.</string>
+			<string>v7.4 preserves the passive v6 baseline: Sink injection is disabled regardless of this legacy switch. Leave it OFF. The app traces capability codecs, assigned SEIDs, private callback returns and timing, plus a session checklist. A2DP Sink SDP advertisement (0x110B) and incoming Bluetooth playback are NOT implemented.</string>
 		</dict>
 		<dict>
 			<key>cell</key>

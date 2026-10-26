@@ -1,3 +1,9 @@
+# BTPhonoSink v7.4 — bluetoothd → helper one-shot PCM experiment
+
+**Next device test: [TESTING-v7.4.md](TESTING-v7.4.md)**. v7.4 adds a new Settings action that posts a one-shot notification to `bluetoothd`. The daemon handles it on a dedicated serial queue and attempts a **bounded 880 Hz PCM transfer** to the same independent helper used by v7.3, now started in `--daemon` mode. This tests a real daemon-to-helper IPC boundary with logging and checksums. An actual A2DP Sink, inbound media transport, and reliable SBC decoding are **not yet implemented**.
+
+**Safety:** Keep Legacy Sink OFF. The 5 baseline hooks remain pass-through and the 6 native Source endpoints are preserved. The optional SDP observer can be OFF for the initial test. The new sender cannot run without an explicit Settings request and does not block a Bluetooth hook thread. Maintain the v7.3 `.deb` as rollback.
+
 > **Next test:** See [TESTING-v7.3.md](TESTING-v7.3.md). This release adds an SSH-launched mobile-user `BTPSAudioHelper` which attempts to play PCM supplied over a loopback socket by Preferences.app. It neither enables Sink service 0x110B nor receives Bluetooth frames. The helper is **not** a background daemon and is never spawned automatically. Legacy Sink stays OFF. The separate helper may be blocked from CoreAudio; that failure is a meaningful diagnostic outcome.
 
 # BTPhonoSink v7.3: separate-process PCM transport test (plus prior SDP diagnostics)

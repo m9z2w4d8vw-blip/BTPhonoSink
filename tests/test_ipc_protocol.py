@@ -23,6 +23,9 @@ class IPCTests(unittest.TestCase):
         cls.lib.btps_ipc_encode.argtypes=[ctypes.c_void_p,ctypes.c_uint32,ctypes.c_uint32]
         cls.lib.btps_ipc_validate.argtypes=[ctypes.c_void_p,ctypes.c_uint32,ctypes.c_void_p,ctypes.c_size_t]
         cls.lib.btps_ipc_validate.restype=ctypes.c_int
+        cls.lib.btps_ipc_encode_daemon_v74.argtypes=[ctypes.c_void_p,ctypes.c_uint32,ctypes.c_uint32]
+        cls.lib.btps_ipc_validate_daemon_v74.argtypes=[ctypes.c_void_p,ctypes.c_uint32,ctypes.c_void_p,ctypes.c_size_t]
+        cls.lib.btps_ipc_validate_daemon_v74.restype=ctypes.c_int
     @classmethod
     def tearDownClass(cls):cls.tmp.cleanup()
     def build(self):
@@ -60,6 +63,44 @@ class IPCTests(unittest.TestCase):
     def test_reject_null_payload(self):
         h,_,_=self.build()
         self.assertEqual(self.lib.btps_ipc_validate(h,123456,None,70560),0)
+    def build_daemon_v74(self):
+        pcm=bytes([0x14,0x9A])*35280
+        raw=ctypes.create_string_buffer(pcm)
+        crc=self.lib.btps_ipc_crc32(raw,70560)
+        header=ctypes.create_string_buffer(28)
+        self.lib.btps_ipc_encode_daemon_v74(header,654321,crc)
+        return header,raw,crc
+    def test_v74_magic_tag_and_crc(self):
+        h,pcm,crc=self.build_daemon_v74()
+        self.assertEqual(h.raw[:4],b'BTPS')
+        self.assertEqual(struct.unpack_from('<HHIIII',h.raw,4),(2,1,44100,35280,654321,crc))
+        self.assertEqual(h.raw[24:],b'BTD4')
+        self.assertEqual(self.lib.btps_ipc_validate_daemon_v74(h,654321,pcm,70560),1)
+        self.assertEqual(zlib.crc32(pcm.raw[:70560]),crc)
+    def test_v74_rejects_wrong_token(self):
+        h,pcm,_=self.build_daemon_v74()
+        self.assertEqual(self.lib.btps_ipc_validate_daemon_v74(h,123456,pcm,70560),0)
+    def test_v74_rejects_wrong_sender_tag(self):
+        h,pcm,_=self.build_daemon_v74()
+        h[24]=ord('X')
+        self.assertEqual(self.lib.btps_ipc_validate_daemon_v74(h,654321,pcm,70560),0)
+    def test_v74_rejects_wrong_version(self):
+        h,pcm,_=self.build_daemon_v74()
+        h[4]=1
+        self.assertEqual(self.lib.btps_ipc_validate_daemon_v74(h,654321,pcm,70560),0)
+    def test_v74_rejects_wrong_length(self):
+        h,pcm,_=self.build_daemon_v74()
+        self.assertEqual(self.lib.btps_ipc_validate_daemon_v74(h,654321,pcm,70558),0)
+    def test_v74_rejects_crc_tampering(self):
+        h,pcm,_=self.build_daemon_v74()
+        pcm[1]=ord('Z')
+        self.assertEqual(self.lib.btps_ipc_validate_daemon_v74(h,654321,pcm,70560),0)
+    def test_v74_rejects_legacy_v1_payload(self):
+        h,pcm,_=self.build()
+        self.assertEqual(self.lib.btps_ipc_validate_daemon_v74(h,123456,pcm,70560),0)
+    def test_v74_rejects_null_payload(self):
+        h,_,_=self.build_daemon_v74()
+        self.assertEqual(self.lib.btps_ipc_validate_daemon_v74(h,654321,None,70560),0)
     def test_source_wiring(self):
         ui=(ROOT/'btphonosinkprefs/BTPSLogViewController.m').read_text()
         daemon=(ROOT/'Tweak.xm').read_text()
@@ -75,5 +116,6 @@ class IPCTests(unittest.TestCase):
     def test_log_export_result(self):
         report=(ROOT/'btphonosinkprefs/BTPSLogReader.m').read_text()
         self.assertIn('V7.3 INTERPROCESS AUDIO TEST',report)
+        self.assertIn('V7.4 BLUETOOTHD-TO-HELPER REQUEST',report)
         self.assertIn('BTPSIPCPlaybackLastResult',report)
 if __name__=='__main__':unittest.main()

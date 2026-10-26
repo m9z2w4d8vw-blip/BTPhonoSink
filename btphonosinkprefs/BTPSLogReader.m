@@ -193,6 +193,12 @@ static NSArray<NSString *> *ReadFileLines(NSString *path, NSString **note)
     [out appendFormat:@"\n== V7.3 INTERPROCESS AUDIO TEST ==\n%@\n",
                       ipcTest ?: @"Not yet run. Start BTPSAudioHelper over SSH; then send PCM from the Debug log button."];
     [out appendString:@"IPC transfer is local to this phone; it does not prove Bluetooth reception or helper audio privileges.\n"];
+    NSString *daemonIPCTest = [[NSUserDefaults standardUserDefaults] stringForKey:@"BTPSDaemonIPCRequestLastResult"];
+    [out appendFormat:@"\n== V7.4 BLUETOOTHD-TO-HELPER REQUEST ==\n%@\n",
+                      daemonIPCTest ?: @"Not run. Start BTPSAudioHelper --daemon in SSH, then use the Settings button."];
+    [out appendFormat:@"Daemon status: %@\n", s.status[@"diag.v74_ipc"] ?: @"No daemon IPC result observed yet."];
+    [out appendString:@"A posted notification is NOT a receipt. Look for IPC_RECEIVED on SSH and an actual audible 880 Hz tone. This does not receive Bluetooth media.\n"];
+
     [out appendString:@"\n== STATUS (written by the tweak inside the daemon) ==\n"];
     if (s.status.count == 0) {
         [out appendString:@"(nothing yet)\n"];

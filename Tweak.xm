@@ -63,8 +63,9 @@
 #include "BTPSBuild.h"
 #include "BTPSLog.h"
 #include "BTPSShared.h"
+#include "BTPSDaemonProbe.h"
 
-#define BTPS_BUILD_TAG "v7.3-ipc-audio-probe"
+#define BTPS_BUILD_TAG "v7.4-daemon-to-helper-probe"
 
 /* AVDTP constants, used for native Source registration diagnostics */
 #define BTPS_AVDTP_TSEP_SRC 0u
@@ -647,4 +648,9 @@ static void install_hooks(uintptr_t base, int uuid_ok)
 
     install_hooks((uintptr_t)mh, uuid_ok);
     install_optional_sdp_probe((uintptr_t)mh, uuid_ok);
+    /* Explicit user request only; no sockets or audio on Bluetooth callback threads. */
+    if (uuid_ok && g_orig[BTPS_H_REGISTER] && g_orig[BTPS_H_ADVERTISE])
+        BTPSDaemonProbeStart();
+    else
+        BTPSSetStatus("diag.v74_ipc", "DISABLED: exact daemon UUID and baseline hooks required");
 }

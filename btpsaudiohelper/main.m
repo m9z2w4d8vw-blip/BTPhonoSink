@@ -36,7 +36,7 @@ static int recv_exact(int fd,void *buffer,size_t n) {
     return 0;
 }
 static void reply(int fd,const char *code){(void)send(fd,code,strlen(code),0);}
-static int play_pcm(const uint8_t *pcm) {
+static int play_pcm(const uint8_t *pcm, int daemon_mode) {
     NSError *err=nil;
     AVAudioSession *session=[AVAudioSession sharedInstance];
     if (![session setCategory:AVAudioSessionCategoryPlayback error:&err] ||
@@ -50,7 +50,7 @@ static int play_pcm(const uint8_t *pcm) {
         [session setActive:NO error:NULL];
         return 4;
     }
-    fprintf(stdout,"AUDIO_STARTED process=BTPSAudioHelper pid=%ld duration=0.8s frequency=660Hz\n",(long)getpid());
+    fprintf(stdout,"AUDIO_STARTED process=BTPSAudioHelper pid=%ld duration=0.8s frequency=%dHz source=%s\n",(long)getpid(),daemon_mode?880:660,daemon_mode?"bluetoothd-request":"Settings-request");
     fflush(stdout);
     NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:3.0];
     while(player.isPlaying && [deadline timeIntervalSinceNow]>0)
@@ -63,9 +63,13 @@ static int play_pcm(const uint8_t *pcm) {
 }
 int main(int argc,const char **argv) {
     @autoreleasepool {
-        if(argc!=1 && argc!=2){fprintf(stderr,"usage: /var/jb/usr/bin/BTPSAudioHelper [timeout_seconds: 15..180]\n");return 2;}
+        /* Existing CLI preserved: no args or optional 15..180 second timeout.
+         * New --daemon mode expects a v2 frame from bluetoothd, never Settings. */
+        int daemon_mode=argc>=2 && strcmp(argv[1],"--daemon")==0;
+        int at=daemon_mode?2:1;
+        if(argc>at+1){fprintf(stderr,"usage: BTPSAudioHelper [--daemon] [timeout_seconds: 15..180]\n");return 2;}
         int seconds=120;
-        if(argc==2){char *end=NULL;long val=strtol(argv[1],&end,10);
+        if(argc==at+1){char *end=NULL;long val=strtol(argv[at],&end,10);
             if(!end||*end||val<15||val>180){fprintf(stderr,"timeout must be 15..180 seconds\n");return 2;} seconds=(int)val;}
         uint32_t token=100000u+arc4random_uniform(900000u);
         int listener=socket(AF_INET,SOCK_STREAM,0);
@@ -75,8 +79,10 @@ int main(int argc,const char **argv) {
         int reuse=1;setsockopt(listener,SOL_SOCKET,SO_REUSEADDR,&reuse,sizeof(reuse));
         if(bind(listener,(struct sockaddr*)&address,sizeof(address))!=0 || listen(listener,1)!=0){
             perror("bind/listen loopback");close(listener);return 2;}
-        printf("BTPS_V73_HELPER_READY pid=%ld port=%d token=%06u timeout=%ds\n",(long)getpid(),BTPS_IPC_PORT,token,seconds);
-        printf("On iPhone: Settings > BTPhonoSink > Debug log > Send PCM to separate helper; enter token %06u.\n",token);
+        printf("BTPS_V74_%s_READY pid=%ld port=%d token=%06u timeout=%ds\n",
+               daemon_mode?"DAEMON":"SETTINGS",(long)getpid(),BTPS_IPC_PORT,token,seconds);
+        printf("On iPhone: Settings > BTPhonoSink > Debug log > %s; enter token %06u.\n",
+               daemon_mode?"Send PCM from bluetoothd (v7.4)":"Send PCM to separate helper (v7.3)",token);
         fflush(stdout);
         fd_set set;FD_ZERO(&set);FD_SET(listener,&set);struct timeval timer={seconds,0};
         int ready=select(listener+1,&set,NULL,NULL,&timer);
@@ -85,18 +91,22 @@ int main(int argc,const char **argv) {
         if(fd<0){perror("accept");return 2;}
         int nosigpipe=1;setsockopt(fd,SOL_SOCKET,SO_NOSIGPIPE,&nosigpipe,sizeof(nosigpipe));
         struct timeval t={5,0};setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&t,sizeof(t));
-        uint8_t header[BTPS_IPC_HEADER_SIZE];
+        uint8_t header[BTPS_IPC_V74_HEADER_SIZE]={0};
         uint8_t *pcm=(uint8_t*)malloc(BTPS_IPC_PCM_BYTES);
         if(!pcm){reply(fd,"NO_MEM");close(fd);return 2;}
-        if(recv_exact(fd,header,sizeof(header))!=0 || recv_exact(fd,pcm,BTPS_IPC_PCM_BYTES)!=0 ||
-           !btps_ipc_validate(header,token,pcm,BTPS_IPC_PCM_BYTES)){
-            printf("IPC_REJECT malformed frame / CRC mismatch / incorrect token\n");fflush(stdout);
+        size_t header_size=daemon_mode?BTPS_IPC_V74_HEADER_SIZE:BTPS_IPC_HEADER_SIZE;
+        if(recv_exact(fd,header,header_size)!=0 || recv_exact(fd,pcm,BTPS_IPC_PCM_BYTES)!=0 ||
+           !(daemon_mode?btps_ipc_validate_daemon_v74(header,token,pcm,BTPS_IPC_PCM_BYTES)
+                         :btps_ipc_validate(header,token,pcm,BTPS_IPC_PCM_BYTES))){
+            printf("IPC_REJECT malformed frame / CRC mismatch / incorrect token / sender mode mismatch\n");fflush(stdout);
             reply(fd,"REJECT");free(pcm);close(fd);return 7;}
-        printf("IPC_RECEIVED bytes=%u CRC32=verified sampleRate=44100 channels=1 duration=0.8s\n",BTPS_IPC_PCM_BYTES);
+        printf("IPC_RECEIVED mode=%s bytes=%u CRC32=verified sampleRate=44100 channels=1 duration=0.8s\n",
+               daemon_mode?"bluetoothd":"Settings",BTPS_IPC_PCM_BYTES);
         fflush(stdout);
         reply(fd,"RECEIVED");close(fd);
-        int playback=play_pcm(pcm);free(pcm);
-        printf("BTPS_V73_TEST_RESULT ipc=PASS audio_api=%s\n",playback==0?"FINISHED":"FAILED");
+        int playback=play_pcm(pcm,daemon_mode);free(pcm);
+        printf("BTPS_V74_TEST_RESULT source=%s ipc=PASS audio_api=%s\n",
+               daemon_mode?"bluetoothd":"Settings",playback==0?"FINISHED":"FAILED");
         fflush(stdout);
         return playback;
     }

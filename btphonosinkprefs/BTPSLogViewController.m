@@ -5,6 +5,9 @@
 #import "BTPSLogReader.h"
 #import "BTPSAudioProbe.h"
 #import "BTPSIPCSender.h"
+#import <CoreFoundation/CoreFoundation.h>
+#import <notify.h>
+#import "../BTPSShared.h"
 
 @interface BTPSLogViewController () <UIDocumentPickerDelegate>
 @end
@@ -60,6 +63,10 @@
     [ipcButton setTitle:@"Send PCM to Separate Helper (v7.3)" forState:UIControlStateNormal];
     [ipcButton addTarget:self action:@selector(promptIPCTest) forControlEvents:UIControlEventTouchUpInside];
     [actions addArrangedSubview:ipcButton];
+    UIButton *daemonButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    [daemonButton setTitle:@"Send PCM from bluetoothd (v7.4)" forState:UIControlStateNormal];
+    [daemonButton addTarget:self action:@selector(promptDaemonIPCTest) forControlEvents:UIControlEventTouchUpInside];
+    [actions addArrangedSubview:daemonButton];
     UILayoutGuide *safe = self.view.safeAreaLayoutGuide;
     [NSLayoutConstraint activateConstraints:@[
         [_textView.topAnchor constraintEqualToAnchor:safe.topAnchor],
@@ -198,19 +205,20 @@
 - (void)showChecklist
 {
     NSString *log = [[BTPSLogReader shared] fullText];
-    BOOL correctBuild = [log containsString:@"build: v7.3-ipc-audio-probe"];
+    BOOL correctBuild = [log containsString:@"build: v7.4-daemon-to-helper-probe"];
     BOOL hooks = [log containsString:@"hooks installed: 5 / 5"];
     BOOL sources = [log containsString:@"diag.native_source_ok: 6"];
     BOOL legacyOff = [log containsString:@"experiments: off (v7 forced-passive, stored=off)"];
     BOOL probe = [log containsString:@"diag.sdp_probe: installed"];
     BOOL sdpsource = [log containsString:@"diag.sdp_source_seen: yes"];
+    BOOL daemonArmed = [log containsString:@"diag.v74_ipc: ARMED"] || [log containsString:@"diag.v74_ipc: PASS"];
     BOOL sbc = [log containsString:@"seen.SetConfig_accept_SBC:"] && ![log containsString:@"seen.SetConfig_accept_SBC: 0 call(s)"];
     NSString *check = [NSString stringWithFormat:
-       @"%@ v7.3 is running\n%@ Five original hooks installed\n%@ Six original Source endpoints\n%@ Legacy experiment is OFF\n%@ Optional SDP observer installed\n%@ Audio Source SDP record observed\n%@ SBC negotiation callback seen\n\nMANUAL: Confirm headphones play after reconnecting.\nMANUAL: Export and send the log using Save Log to iCloud Drive.\nMANUAL: Run the separate helper over SSH, then send PCM from Settings. See the helper terminal for AUDIO_FINISHED; confirm you heard 660 Hz.\n\nThe 440 Hz test is local to Settings. V7.3 sends 660 Hz PCM to a separate process. Neither test means Windows audio can reach this phone.",
+       @"%@ v7.4 is running\n%@ Five original hooks installed\n%@ Six original Source endpoints\n%@ Legacy experiment is OFF\n%@ Optional SDP observer installed\n%@ Audio Source SDP record observed\n%@ SBC negotiation callback seen\n%@ Daemon-to-helper test is ARMED or PASS\n\nMANUAL: Confirm headphones play after reconnecting.\nMANUAL: Export and send the log using Save Log to iCloud Drive.\nMANUAL v7.4: Start helper with --daemon in SSH, then tap Send PCM from bluetoothd and enter its token. Check SSH and diag.v74_ipc; confirm 880 Hz audibility.\n\nThe 440 Hz test is local to Settings. V7.3 sends 660 Hz PCM from Settings. V7.4 can request 880 Hz PCM from bluetoothd. Neither test means Windows Bluetooth audio can reach this phone.",
        correctBuild ? @"PASS" : @"CHECK", hooks ? @"PASS" : @"CHECK",
        sources ? @"PASS" : @"CHECK", legacyOff ? @"PASS" : @"CHECK",
        probe ? @"PASS" : @"NOT ENABLED", sdpsource ? @"PASS" : @"NOT SEEN",
-       sbc ? @"PASS" : @"NOT YET SEEN"];
+       sbc ? @"PASS" : @"NOT YET SEEN", daemonArmed ? @"PASS" : @"NOT ARMED"];
     [self showMessage:check title:@"BTPhonoSink test checklist"];
 }
 
@@ -248,7 +256,7 @@
 - (void)promptIPCTest
 {
     UIAlertController *ask = [UIAlertController alertControllerWithTitle:@"Separate-process PCM test"
-        message:@"FIRST on Windows PowerShell, run:\nssh -t mobile@10.5.79.217 '/var/jb/usr/bin/BTPSAudioHelper'\n\nKeep SSH open. Enter the six-digit token printed by the helper. Settings will send 0.8 seconds of 660 Hz PCM over 127.0.0.1. The helper, NOT Settings, will attempt playback. This does not test Bluetooth Sink reception."
+        message:@"FIRST on Windows PowerShell, run:\nssh -t mobile@10.5.82.212 '/var/jb/usr/bin/BTPSAudioHelper'\n\nKeep SSH open. Enter the six-digit token printed by the helper. Settings will send 0.8 seconds of 660 Hz PCM over 127.0.0.1. The helper, NOT Settings, will attempt playback. This does not test Bluetooth Sink reception."
         preferredStyle:UIAlertControllerStyleAlert];
     [ask addTextFieldWithConfigurationHandler:^(UITextField *field) {
         field.placeholder = @"Six-digit helper token";
@@ -269,6 +277,48 @@
             [weakSelf reload];
             [weakSelf showMessage:status title:@"Interprocess test"];
         }];
+    }]];
+    [self presentViewController:ask animated:YES completion:nil];
+}
+
+
+#pragma mark - Explicit daemon-to-helper IPC test (v7.4)
+
+- (void)promptDaemonIPCTest
+{
+    UIAlertController *ask = [UIAlertController alertControllerWithTitle:@"bluetoothd → separate helper (v7.4)"
+        message:@"1. First run over Windows PowerShell:\nssh -t mobile@10.5.82.212 '/var/jb/usr/bin/BTPSAudioHelper --daemon'\n\n2. Keep SSH open and enter the NEW six-digit token below.\n\n3. This sends a one-shot Darwin notification to bluetoothd. A worker in bluetoothd attempts a bounded, CRC-verified 880 Hz PCM transfer. The helper plays the tone if CoreAudio permits. Never enables Legacy Sink or receives Windows Bluetooth audio."
+        preferredStyle:UIAlertControllerStyleAlert];
+    [ask addTextFieldWithConfigurationHandler:^(UITextField *field) {
+        field.placeholder = @"Six-digit token from --daemon helper";
+        field.keyboardType = UIKeyboardTypeNumberPad;
+    }];
+    [ask addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    __weak __typeof(self) weakSelf = self;
+    [ask addAction:[UIAlertAction actionWithTitle:@"Request daemon transfer" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        NSString *entered = ask.textFields.firstObject.text ?: @"";
+        NSCharacterSet *nonDigits = [[NSCharacterSet characterSetWithCharactersInString:@"0123456789"] invertedSet];
+        if (entered.length != 6 || [entered rangeOfCharacterFromSet:nonDigits].location != NSNotFound || entered.intValue < 100000) {
+            [weakSelf showMessage:@"Enter exactly six digits from BTPSAudioHelper --daemon." title:@"Invalid token"];
+            return;
+        }
+        /* Unique one-shot request ID prevents notification replay; Settings owns the trigger.
+         * The daemon MUST perform any socket calls on its own worker queue, never in a BT hook. */
+        NSString *request = [NSString stringWithFormat:@"%@.%@", entered, [[NSUUID UUID] UUIDString]];
+        CFPreferencesSetValue(CFSTR(BTPS_KEY_DAEMON_PROBE), (__bridge CFStringRef)request,
+                              CFSTR(BTPS_PREFS_DOMAIN), kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+        Boolean synced = CFPreferencesSynchronize(CFSTR(BTPS_PREFS_DOMAIN), kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+        if (!synced) {
+            [weakSelf showMessage:@"Preferences sync failed; no daemon request sent. Check that the tweak is installed." title:@"Daemon IPC test"];
+            return;
+        }
+        uint32_t notifyResult = notify_post(BTPS_NOTIFY_DAEMON_PROBE);
+        NSString *result = notifyResult == NOTIFY_STATUS_OK
+             ? @"Request notification posted. Check the SSH terminal for IPC_RECEIVED / AUDIO_FINISHED, and refresh the debug log for diag.v74_ipc. This is not proof of delivery."
+             : [NSString stringWithFormat:@"notify_post failed: %u. No successful transfer can be inferred.", (unsigned)notifyResult];
+        [[NSUserDefaults standardUserDefaults] setObject:result forKey:@"BTPSDaemonIPCRequestLastResult"];
+        [weakSelf reload];
+        [weakSelf showMessage:result title:@"Daemon IPC request"];
     }]];
     [self presentViewController:ask animated:YES completion:nil];
 }

@@ -24,6 +24,8 @@
 #define BTPS_LOG_FILE_ALT     "/var/mobile/Library/Logs/BTPhonoSink.log"
 
 #define BTPS_NOTIFY_STATE     "com.parv.btphonosink.state"
+#define BTPS_NOTIFY_DAEMON_PROBE "com.parv.btphonosink.v74.ipc.request"
+#define BTPS_KEY_DAEMON_PROBE "BTPhonoSinkV74IPCRequest"
 
 /* ---- the 64-bit notification state word ---------------------------------------------------------------------
  * bit 0  tweak loaded in the daemon      bit 1  UUID matched the analysed build     bit 2  experiments enabled
