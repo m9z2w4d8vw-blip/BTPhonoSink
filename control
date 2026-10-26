@@ -2,7 +2,7 @@ Package: com.parv.btphonosink
 Name: BTPhonoSink
 Version: 0.1.0
 Architecture: iphoneos-arm64
-Description: Bluetooth A2DP sink experiment for the iPhone (observe-only build, debug log in Settings)
+Description: A2DP research diagnostics and manual two-process PCM playback test (not a functional Bluetooth Sink)
 Author: Parv
 Section: Tweaks
 Depends: mobilesubstrate, preferenceloader, firmware (>= 14.0)

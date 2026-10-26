@@ -28,7 +28,16 @@ include $(THEOS)/makefiles/tweak.mk
 # The Settings > Tweaks page with the debug log (folder btphonosinkprefs/).
 # If it ever fails to build, set this to 0 (or run: make package BTPS_WITH_PREFS=0) and the tweak still builds.
 BTPS_WITH_PREFS ?= 1
+# The auxiliary diagnostic executable never runs inside bluetoothd.
+BTPS_WITH_IPC_HELPER ?= 1
+ifeq ($(BTPS_WITH_IPC_HELPER),1)
+SUBPROJECTS += btpsaudiohelper
+endif
 ifeq ($(BTPS_WITH_PREFS),1)
 SUBPROJECTS += btphonosinkprefs
+endif
+
+# The helper and optional Settings bundle participate in the same package.
+ifneq ($(strip $(SUBPROJECTS)),)
 include $(THEOS_MAKE_PATH)/aggregate.mk
 endif

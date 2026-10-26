@@ -4,6 +4,7 @@
 #import "BTPSLogViewController.h"
 #import "BTPSLogReader.h"
 #import "BTPSAudioProbe.h"
+#import "BTPSIPCSender.h"
 
 @interface BTPSLogViewController () <UIDocumentPickerDelegate>
 @end
@@ -55,6 +56,10 @@
     [audioButton setTitle:@"Test iOS Audio Output (440 Hz)" forState:UIControlStateNormal];
     [audioButton addTarget:self action:@selector(confirmAudioTest) forControlEvents:UIControlEventTouchUpInside];
     [actions addArrangedSubview:audioButton];
+    UIButton *ipcButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    [ipcButton setTitle:@"Send PCM to Separate Helper (v7.3)" forState:UIControlStateNormal];
+    [ipcButton addTarget:self action:@selector(promptIPCTest) forControlEvents:UIControlEventTouchUpInside];
+    [actions addArrangedSubview:ipcButton];
     UILayoutGuide *safe = self.view.safeAreaLayoutGuide;
     [NSLayoutConstraint activateConstraints:@[
         [_textView.topAnchor constraintEqualToAnchor:safe.topAnchor],
@@ -193,7 +198,7 @@
 - (void)showChecklist
 {
     NSString *log = [[BTPSLogReader shared] fullText];
-    BOOL correctBuild = [log containsString:@"build: v7.2-sdp-checklist"];
+    BOOL correctBuild = [log containsString:@"build: v7.3-ipc-audio-probe"];
     BOOL hooks = [log containsString:@"hooks installed: 5 / 5"];
     BOOL sources = [log containsString:@"diag.native_source_ok: 6"];
     BOOL legacyOff = [log containsString:@"experiments: off (v7 forced-passive, stored=off)"];
@@ -201,7 +206,7 @@
     BOOL sdpsource = [log containsString:@"diag.sdp_source_seen: yes"];
     BOOL sbc = [log containsString:@"seen.SetConfig_accept_SBC:"] && ![log containsString:@"seen.SetConfig_accept_SBC: 0 call(s)"];
     NSString *check = [NSString stringWithFormat:
-       @"%@ v7.2 is running\n%@ Five original hooks installed\n%@ Six original Source endpoints\n%@ Legacy experiment is OFF\n%@ Optional SDP observer installed\n%@ Audio Source SDP record observed\n%@ SBC negotiation callback seen\n\nMANUAL: Confirm headphones play after reconnecting.\nMANUAL: Export and send the log using Save Log to iCloud Drive.\n\nThe 440 Hz output test is local to Settings; it does NOT mean Windows audio can reach this phone.",
+       @"%@ v7.3 is running\n%@ Five original hooks installed\n%@ Six original Source endpoints\n%@ Legacy experiment is OFF\n%@ Optional SDP observer installed\n%@ Audio Source SDP record observed\n%@ SBC negotiation callback seen\n\nMANUAL: Confirm headphones play after reconnecting.\nMANUAL: Export and send the log using Save Log to iCloud Drive.\nMANUAL: Run the separate helper over SSH, then send PCM from Settings. See the helper terminal for AUDIO_FINISHED; confirm you heard 660 Hz.\n\nThe 440 Hz test is local to Settings. V7.3 sends 660 Hz PCM to a separate process. Neither test means Windows audio can reach this phone.",
        correctBuild ? @"PASS" : @"CHECK", hooks ? @"PASS" : @"CHECK",
        sources ? @"PASS" : @"CHECK", legacyOff ? @"PASS" : @"CHECK",
        probe ? @"PASS" : @"NOT ENABLED", sdpsource ? @"PASS" : @"NOT SEEN",
@@ -236,6 +241,36 @@
         [[NSUserDefaults standardUserDefaults] setObject:message forKey:@"BTPSAudioTestLastResult"];
         [self showMessage:message title:@"Audio output test"];
     }
+}
+
+#pragma mark - Cross-process playback test (v7.3)
+
+- (void)promptIPCTest
+{
+    UIAlertController *ask = [UIAlertController alertControllerWithTitle:@"Separate-process PCM test"
+        message:@"FIRST on Windows PowerShell, run:\nssh -t mobile@10.5.79.217 '/var/jb/usr/bin/BTPSAudioHelper'\n\nKeep SSH open. Enter the six-digit token printed by the helper. Settings will send 0.8 seconds of 660 Hz PCM over 127.0.0.1. The helper, NOT Settings, will attempt playback. This does not test Bluetooth Sink reception."
+        preferredStyle:UIAlertControllerStyleAlert];
+    [ask addTextFieldWithConfigurationHandler:^(UITextField *field) {
+        field.placeholder = @"Six-digit helper token";
+        field.keyboardType = UIKeyboardTypeNumberPad;
+    }];
+    [ask addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    __weak __typeof(self) weakSelf = self;
+    [ask addAction:[UIAlertAction actionWithTitle:@"Send to helper" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        NSString *entered = ask.textFields.firstObject.text ?: @"";
+        NSCharacterSet *nonDigits = [[NSCharacterSet decimalDigitCharacterSet] invertedSet];
+        if(entered.length!=6 || [entered rangeOfCharacterFromSet:nonDigits].location!=NSNotFound){
+            [weakSelf showMessage:@"Enter exactly six digits from the SSH helper output." title:@"Invalid token"];
+            return;
+        }
+        uint32_t token=(uint32_t)entered.intValue;
+        [BTPSIPCSender sendTestPCMWithToken:token completion:^(NSString *status) {
+            [[NSUserDefaults standardUserDefaults] setObject:status forKey:@"BTPSIPCPlaybackLastResult"];
+            [weakSelf reload];
+            [weakSelf showMessage:status title:@"Interprocess test"];
+        }];
+    }]];
+    [self presentViewController:ask animated:YES completion:nil];
 }
 
 @end

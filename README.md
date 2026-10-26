@@ -1,6 +1,8 @@
-# BTPhonoSink v7.2: SDP observer + media foundation + iCloud export
+> **Next test:** See [TESTING-v7.3.md](TESTING-v7.3.md). This release adds an SSH-launched mobile-user `BTPSAudioHelper` which attempts to play PCM supplied over a loopback socket by Preferences.app. It neither enables Sink service 0x110B nor receives Bluetooth frames. The helper is **not** a background daemon and is never spawned automatically. Legacy Sink stays OFF. The separate helper may be blocked from CoreAudio; that failure is a meaningful diagnostic outcome.
 
-The v7.2 build preserves all five v6 baseline hooks and **does not** add an A2DP Sink endpoint or SDP 0x110B record. In Settings, a new OFF-by-default switch enables an **additional** pass-through hook that logs the daemon's *existing* SDP record-add metadata. Switch ON and restart `bluetoothd` **once** if choosing the advanced test; turn OFF and restart to recover the safe v6 baseline. See `TESTING-v7.1.md`.
+# BTPhonoSink v7.3: separate-process PCM transport test (plus prior SDP diagnostics)
+
+The v7.3 build preserves all five v6 baseline hooks and **does not** add an A2DP Sink endpoint or SDP 0x110B record. In Settings, a new OFF-by-default switch enables an **additional** pass-through hook that logs the daemon's *existing* SDP record-add metadata. Switch ON and restart `bluetoothd` **once** if choosing the advanced test; turn OFF and restart to recover the safe v6 baseline. See `TESTING-v7.1.md`.
 
 # BTPhonoSink — v7.1 combined development build
 

@@ -64,7 +64,7 @@
 #include "BTPSLog.h"
 #include "BTPSShared.h"
 
-#define BTPS_BUILD_TAG "v7.2-sdp-checklist"
+#define BTPS_BUILD_TAG "v7.3-ipc-audio-probe"
 
 /* AVDTP constants, used for native Source registration diagnostics */
 #define BTPS_AVDTP_TSEP_SRC 0u

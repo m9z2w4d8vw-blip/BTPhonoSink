@@ -189,6 +189,10 @@ static NSArray<NSString *> *ReadFileLines(NSString *path, NSString **note)
     [out appendFormat:@"\n== SETTINGS PROCESS AUDIO SELF-TEST ==\n%@\n",
                       localTest ?: @"Not run on this installation. Use the Debug log audio test button."];
     [out appendString:@"This test runs in Preferences.app; it cannot verify receiving Bluetooth audio.\n"];
+    NSString *ipcTest = [[NSUserDefaults standardUserDefaults] stringForKey:@"BTPSIPCPlaybackLastResult"];
+    [out appendFormat:@"\n== V7.3 INTERPROCESS AUDIO TEST ==\n%@\n",
+                      ipcTest ?: @"Not yet run. Start BTPSAudioHelper over SSH; then send PCM from the Debug log button."];
+    [out appendString:@"IPC transfer is local to this phone; it does not prove Bluetooth reception or helper audio privileges.\n"];
     [out appendString:@"\n== STATUS (written by the tweak inside the daemon) ==\n"];
     if (s.status.count == 0) {
         [out appendString:@"(nothing yet)\n"];
