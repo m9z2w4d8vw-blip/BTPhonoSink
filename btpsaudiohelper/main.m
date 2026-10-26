@@ -17,6 +17,7 @@
 #import <sys/time.h>
 #import <unistd.h>
 #import "../BTPSIPCProtocol.h"
+#import "../BTPSV75RTP.h"
 
 static void w16(uint8_t *p,uint16_t v){p[0]=(uint8_t)v;p[1]=(uint8_t)(v>>8);}
 static void w32(uint8_t *p,uint32_t v){for(int i=0;i<4;i++)p[i]=(uint8_t)(v>>(i*8));}
@@ -66,8 +67,9 @@ int main(int argc,const char **argv) {
         /* Existing CLI preserved: no args or optional 15..180 second timeout.
          * New --daemon mode expects a v2 frame from bluetoothd, never Settings. */
         int daemon_mode=argc>=2 && strcmp(argv[1],"--daemon")==0;
-        int at=daemon_mode?2:1;
-        if(argc>at+1){fprintf(stderr,"usage: BTPSAudioHelper [--daemon] [timeout_seconds: 15..180]\n");return 2;}
+        int sbc_mode=argc>=2 && strcmp(argv[1],"--sbc")==0;
+        int at=(daemon_mode||sbc_mode)?2:1;
+        if(argc>at+1){fprintf(stderr,"usage: BTPSAudioHelper [--daemon|--sbc] [timeout_seconds: 15..180]\n");return 2;}
         int seconds=120;
         if(argc==at+1){char *end=NULL;long val=strtol(argv[at],&end,10);
             if(!end||*end||val<15||val>180){fprintf(stderr,"timeout must be 15..180 seconds\n");return 2;} seconds=(int)val;}
@@ -79,10 +81,10 @@ int main(int argc,const char **argv) {
         int reuse=1;setsockopt(listener,SOL_SOCKET,SO_REUSEADDR,&reuse,sizeof(reuse));
         if(bind(listener,(struct sockaddr*)&address,sizeof(address))!=0 || listen(listener,1)!=0){
             perror("bind/listen loopback");close(listener);return 2;}
-        printf("BTPS_V74_%s_READY pid=%ld port=%d token=%06u timeout=%ds\n",
-               daemon_mode?"DAEMON":"SETTINGS",(long)getpid(),BTPS_IPC_PORT,token,seconds);
+        printf("BTPS_%s_READY pid=%ld port=%d token=%06u timeout=%ds\n",
+               sbc_mode?"V75_SBC":(daemon_mode?"V74_DAEMON":"V74_SETTINGS"),(long)getpid(),BTPS_IPC_PORT,token,seconds);
         printf("On iPhone: Settings > BTPhonoSink > Debug log > %s; enter token %06u.\n",
-               daemon_mode?"Send PCM from bluetoothd (v7.4)":"Send PCM to separate helper (v7.3)",token);
+               sbc_mode?"Send compressed SBC from bluetoothd (v7.5)":(daemon_mode?"Send PCM from bluetoothd (v7.4)":"Send PCM to separate helper (v7.3)"),token);
         fflush(stdout);
         fd_set set;FD_ZERO(&set);FD_SET(listener,&set);struct timeval timer={seconds,0};
         int ready=select(listener+1,&set,NULL,NULL,&timer);
@@ -91,6 +93,39 @@ int main(int argc,const char **argv) {
         if(fd<0){perror("accept");return 2;}
         int nosigpipe=1;setsockopt(fd,SOL_SOCKET,SO_NOSIGPIPE,&nosigpipe,sizeof(nosigpipe));
         struct timeval t={5,0};setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&t,sizeof(t));
+        if(sbc_mode) {
+            uint8_t header75[BTPS_IPC_V75_HEADER_SIZE]={0};
+            uint8_t *blob=(uint8_t *)malloc(BTPS_IPC_V75_FIXTURE_SIZE);
+            uint8_t *frames=(uint8_t *)malloc(BTPS_V75_SBC_BYTES_LIMIT);
+            if(!blob||!frames){reply(fd,"NO_MEM");free(blob);free(frames);close(fd);return 2;}
+            size_t decoded_size=0;unsigned packet_count=0,frame_count=0;
+            int ok=recv_exact(fd,header75,sizeof header75)==0 &&
+                recv_exact(fd,blob,BTPS_IPC_V75_FIXTURE_SIZE)==0 &&
+                btps_ipc_validate_sbc_v75(header75,token,blob,BTPS_IPC_V75_FIXTURE_SIZE) &&
+                btps_v75_extract_sbc(blob,BTPS_IPC_V75_FIXTURE_SIZE,frames,BTPS_V75_SBC_BYTES_LIMIT,
+                                     &decoded_size,&packet_count,&frame_count)==0;
+            if(!ok) {
+                printf("SBC_REJECT malformed token/CRC/RTP/sequence/SBC frame boundaries\n");fflush(stdout);
+                reply(fd,"SBC_REJECT");free(blob);free(frames);close(fd);return 7;
+            }
+            printf("SBC_RECEIVED source=bluetoothd bytes=%u CRC32=verified packets=%u frames=%u sampleRate=44100 channels=2 extractedSBC=%zu\n",
+                   BTPS_IPC_V75_FIXTURE_SIZE,packet_count,frame_count,decoded_size);
+            fflush(stdout);
+            /* Only a copy of the pre-generated SBC fixture is saved. No live RF capture.
+             * A timestamp/PID suffix avoids clobbering an earlier test. */
+            NSString *path=[NSHomeDirectory() stringByAppendingPathComponent:
+                 [NSString stringWithFormat:@"Documents/BTPhonoSink-v75-%ld-%lld.sbc",(long)getpid(),(long long)[[NSDate date] timeIntervalSince1970]]];
+            NSString *dir=[path stringByDeletingLastPathComponent];
+            NSError *err=nil;
+            [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:&err];
+            BOOL saved=[[NSData dataWithBytes:frames length:decoded_size] writeToFile:path options:NSDataWritingAtomic error:&err];
+            if(saved)printf("SBC_CAPTURE_SAVED path=%s bytes=%zu (compressed stream only; not decoded/played)\n",path.UTF8String,decoded_size);
+            else printf("SBC_CAPTURE_SAVE_FAIL %s (transport validation still passed)\n",(err.localizedDescription?:@"unknown").UTF8String);
+            reply(fd,"SBC_VERIFIED");close(fd);free(blob);free(frames);
+            printf("BTPS_V75_RESULT ipc=PASS rtp=PASS sbc_frames=PASS pcm_decode=NOT_TESTED live_bluetooth=NO\n");
+            fflush(stdout);
+            return 0;
+        }
         uint8_t header[BTPS_IPC_V74_HEADER_SIZE]={0};
         uint8_t *pcm=(uint8_t*)malloc(BTPS_IPC_PCM_BYTES);
         if(!pcm){reply(fd,"NO_MEM");close(fd);return 2;}

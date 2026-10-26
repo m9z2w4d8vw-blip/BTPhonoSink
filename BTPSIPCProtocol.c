@@ -39,3 +39,18 @@ int btps_ipc_validate_daemon_v74(const uint8_t h[BTPS_IPC_V74_HEADER_SIZE],uint3
     if(r32(h+8)!=BTPS_IPC_SAMPLERATE || r32(h+12)!=BTPS_IPC_FRAMES || r32(h+16)!=token) return 0;
     return btps_ipc_crc32(pcm,n)==r32(h+20);
 }
+
+void btps_ipc_encode_sbc_v75(uint8_t h[BTPS_IPC_V75_HEADER_SIZE],uint32_t token,uint32_t crc) {
+    memset(h,0,BTPS_IPC_V75_HEADER_SIZE);
+    memcpy(h,"BTPS",4); w16(h+4,BTPS_IPC_V75_VERSION); w16(h+6,2u); /* A2DP RTP/SBC sample */
+    w32(h+8,BTPS_IPC_V75_FIXTURE_SIZE); w32(h+12,BTPS_IPC_V75_PACKET_COUNT);
+    w32(h+16,token);w32(h+20,crc);memcpy(h+24,"BTD5",4);w32(h+28,44100u);
+}
+int btps_ipc_validate_sbc_v75(const uint8_t h[BTPS_IPC_V75_HEADER_SIZE],uint32_t token,
+                               const uint8_t *payload,size_t count) {
+    if(!h||!payload||count!=BTPS_IPC_V75_FIXTURE_SIZE) return 0;
+    if(memcmp(h,"BTPS",4)!=0 || r16(h+4)!=BTPS_IPC_V75_VERSION || r16(h+6)!=2u) return 0;
+    if(r32(h+8)!=BTPS_IPC_V75_FIXTURE_SIZE || r32(h+12)!=BTPS_IPC_V75_PACKET_COUNT ||
+       r32(h+16)!=token || memcmp(h+24,"BTD5",4)!=0 || r32(h+28)!=44100u) return 0;
+    return btps_ipc_crc32(payload,count)==r32(h+20);
+}

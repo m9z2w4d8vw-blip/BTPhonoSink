@@ -48,7 +48,7 @@
 
     UIStackView *actions = [[UIStackView alloc] initWithFrame:CGRectZero];
     actions.axis = UILayoutConstraintAxisVertical;
-    actions.spacing = 6.0;
+    actions.spacing = 2.0;
     actions.translatesAutoresizingMaskIntoConstraints = NO;
     [self.view addSubview:actions];
     UIButton *checkButton = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -67,6 +67,10 @@
     [daemonButton setTitle:@"Send PCM from bluetoothd (v7.4)" forState:UIControlStateNormal];
     [daemonButton addTarget:self action:@selector(promptDaemonIPCTest) forControlEvents:UIControlEventTouchUpInside];
     [actions addArrangedSubview:daemonButton];
+    UIButton *sbcButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    [sbcButton setTitle:@"Send Compressed SBC from bluetoothd (v7.5)" forState:UIControlStateNormal];
+    [sbcButton addTarget:self action:@selector(promptSBCIPCTest) forControlEvents:UIControlEventTouchUpInside];
+    [actions addArrangedSubview:sbcButton];
     UILayoutGuide *safe = self.view.safeAreaLayoutGuide;
     [NSLayoutConstraint activateConstraints:@[
         [_textView.topAnchor constraintEqualToAnchor:safe.topAnchor],
@@ -205,20 +209,21 @@
 - (void)showChecklist
 {
     NSString *log = [[BTPSLogReader shared] fullText];
-    BOOL correctBuild = [log containsString:@"build: v7.4-daemon-to-helper-probe"];
+    BOOL correctBuild = [log containsString:@"build: v7.5-sbc-rtp-ipc-probe"];
     BOOL hooks = [log containsString:@"hooks installed: 5 / 5"];
     BOOL sources = [log containsString:@"diag.native_source_ok: 6"];
     BOOL legacyOff = [log containsString:@"experiments: off (v7 forced-passive, stored=off)"];
     BOOL probe = [log containsString:@"diag.sdp_probe: installed"];
     BOOL sdpsource = [log containsString:@"diag.sdp_source_seen: yes"];
     BOOL daemonArmed = [log containsString:@"diag.v74_ipc: ARMED"] || [log containsString:@"diag.v74_ipc: PASS"];
+    BOOL sbcArmed = [log containsString:@"diag.v75_sbc: ARMED"] || [log containsString:@"diag.v75_sbc: PASS"];
     BOOL sbc = [log containsString:@"seen.SetConfig_accept_SBC:"] && ![log containsString:@"seen.SetConfig_accept_SBC: 0 call(s)"];
     NSString *check = [NSString stringWithFormat:
-       @"%@ v7.4 is running\n%@ Five original hooks installed\n%@ Six original Source endpoints\n%@ Legacy experiment is OFF\n%@ Optional SDP observer installed\n%@ Audio Source SDP record observed\n%@ SBC negotiation callback seen\n%@ Daemon-to-helper test is ARMED or PASS\n\nMANUAL: Confirm headphones play after reconnecting.\nMANUAL: Export and send the log using Save Log to iCloud Drive.\nMANUAL v7.4: Start helper with --daemon in SSH, then tap Send PCM from bluetoothd and enter its token. Check SSH and diag.v74_ipc; confirm 880 Hz audibility.\n\nThe 440 Hz test is local to Settings. V7.3 sends 660 Hz PCM from Settings. V7.4 can request 880 Hz PCM from bluetoothd. Neither test means Windows Bluetooth audio can reach this phone.",
+       @"%@ v7.5 is running\n%@ Five original hooks installed\n%@ Six original Source endpoints\n%@ Legacy experiment is OFF\n%@ Optional SDP observer installed\n%@ Audio Source SDP record observed\n%@ SBC negotiation callback seen\n%@ Daemon-to-helper test is ARMED or PASS\n%@ Compressed SBC transport is ARMED or PASS\n\nMANUAL: Confirm headphones play after reconnecting.\nMANUAL: Export and send the log using Save Log to iCloud Drive.\nMANUAL v7.4: Start helper with --daemon in SSH, then tap Send PCM from bluetoothd and enter its token. Check SSH and diag.v74_ipc; confirm 880 Hz audibility.\nMANUAL v7.5: start helper with --sbc then Send Compressed SBC; expect SBC_RECEIVED and no tone.\n\nThe 440 Hz test is local to Settings. V7.3 sends 660 Hz PCM from Settings. V7.4 can request 880 Hz PCM from bluetoothd. Neither test means Windows Bluetooth audio can reach this phone.",
        correctBuild ? @"PASS" : @"CHECK", hooks ? @"PASS" : @"CHECK",
        sources ? @"PASS" : @"CHECK", legacyOff ? @"PASS" : @"CHECK",
        probe ? @"PASS" : @"NOT ENABLED", sdpsource ? @"PASS" : @"NOT SEEN",
-       sbc ? @"PASS" : @"NOT YET SEEN", daemonArmed ? @"PASS" : @"NOT ARMED"];
+       sbc ? @"PASS" : @"NOT YET SEEN", daemonArmed ? @"PASS" : @"NOT ARMED",sbcArmed?@"PASS":@"NOT ARMED"];
     [self showMessage:check title:@"BTPhonoSink test checklist"];
 }
 
@@ -319,6 +324,36 @@
         [[NSUserDefaults standardUserDefaults] setObject:result forKey:@"BTPSDaemonIPCRequestLastResult"];
         [weakSelf reload];
         [weakSelf showMessage:result title:@"Daemon IPC request"];
+    }]];
+    [self presentViewController:ask animated:YES completion:nil];
+}
+
+#pragma mark - v7.5 opt-in compressed RTP/SBC diagnostic
+- (void)promptSBCIPCTest
+{
+    UIAlertController *ask=[UIAlertController alertControllerWithTitle:@"bluetoothd → SBC helper (v7.5)"
+        message:@"First run over SSH:\nssh -t mobile@10.5.82.212 '/var/jb/usr/bin/BTPSAudioHelper --sbc'\n\nEnter its NEW six-digit token here, then request the transfer. Sends a finite built-in 440 Hz SBC/RTP sample from bluetoothd; it is NOT received via Bluetooth and will NOT produce a sound. The helper checks and saves compressed frames. Leave Legacy Sink OFF."
+        preferredStyle:UIAlertControllerStyleAlert];
+    [ask addTextFieldWithConfigurationHandler:^(UITextField *f){f.placeholder=@"Six-digit --sbc token";f.keyboardType=UIKeyboardTypeNumberPad;}];
+    [ask addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    __weak __typeof(self) weakSelf=self;
+    [ask addAction:[UIAlertAction actionWithTitle:@"Request compressed transfer" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
+        NSString *entered=ask.textFields.firstObject.text?:@"";
+        NSCharacterSet *invalid=[[NSCharacterSet characterSetWithCharactersInString:@"0123456789"] invertedSet];
+        if(entered.length!=6 || [entered rangeOfCharacterFromSet:invalid].location!=NSNotFound || entered.intValue<100000) {
+            [weakSelf showMessage:@"Enter the exact six-digit token from the --sbc helper." title:@"Invalid token"];return;
+        }
+        NSString *request=[NSString stringWithFormat:@"%@.%@",entered,[[NSUUID UUID] UUIDString]];
+        CFPreferencesSetValue(CFSTR(BTPS_KEY_V75_SBC),(__bridge CFStringRef)request,CFSTR(BTPS_PREFS_DOMAIN),kCFPreferencesCurrentUser,kCFPreferencesAnyHost);
+        if(!CFPreferencesSynchronize(CFSTR(BTPS_PREFS_DOMAIN),kCFPreferencesCurrentUser,kCFPreferencesAnyHost)) {
+            [weakSelf showMessage:@"Preference synchronization failed; no request sent." title:@"SBC test"];return;
+        }
+        uint32_t code=notify_post(BTPS_NOTIFY_V75_SBC);
+        NSString *report=code==NOTIFY_STATUS_OK
+           ? @"Request posted. Check SSH for SBC_RECEIVED and BTPS_V75_RESULT, then refresh debug log for diag.v75_sbc. This does NOT play audio or receive radio packets."
+           : [NSString stringWithFormat:@"Notification failed: %u",(unsigned)code];
+        [[NSUserDefaults standardUserDefaults] setObject:report forKey:@"BTPSV75SBCRequestLastResult"];
+        [weakSelf reload];[weakSelf showMessage:report title:@"Compressed SBC test"];
     }]];
     [self presentViewController:ask animated:YES completion:nil];
 }

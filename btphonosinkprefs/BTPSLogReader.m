@@ -193,6 +193,11 @@ static NSArray<NSString *> *ReadFileLines(NSString *path, NSString **note)
     [out appendFormat:@"\n== V7.3 INTERPROCESS AUDIO TEST ==\n%@\n",
                       ipcTest ?: @"Not yet run. Start BTPSAudioHelper over SSH; then send PCM from the Debug log button."];
     [out appendString:@"IPC transfer is local to this phone; it does not prove Bluetooth reception or helper audio privileges.\n"];
+    NSString *sbcRequest=[[NSUserDefaults standardUserDefaults] stringForKey:@"BTPSV75SBCRequestLastResult"];
+    [out appendString:@"\n== V7.5 COMPRESSED SBC RTP TEST ==\n"];
+    if(sbcRequest.length)[out appendFormat:@"%@\n",sbcRequest];
+    [out appendFormat:@"Daemon status: %@\nThis tests a pre-generated compressed SBC fixture, NOT Bluetooth reception or audio decoding.\n",s.status[@"diag.v75_sbc"]?:@"No result yet."];
+
     NSString *daemonIPCTest = [[NSUserDefaults standardUserDefaults] stringForKey:@"BTPSDaemonIPCRequestLastResult"];
     [out appendFormat:@"\n== V7.4 BLUETOOTHD-TO-HELPER REQUEST ==\n%@\n",
                       daemonIPCTest ?: @"Not run. Start BTPSAudioHelper --daemon in SSH, then use the Settings button."];

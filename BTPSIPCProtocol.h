@@ -13,6 +13,14 @@
 #define BTPS_IPC_VERSION 1u
 #define BTPS_IPC_V74_HEADER_SIZE (BTPS_IPC_HEADER_SIZE + 4u)
 #define BTPS_IPC_V74_VERSION 2u
+#define BTPS_IPC_V75_VERSION 3u
+#define BTPS_IPC_V75_HEADER_SIZE 32u
+#define BTPS_IPC_V75_MAX_BYTES 20000u
+#define BTPS_IPC_V75_FIXTURE_SIZE 15996u
+#define BTPS_IPC_V75_PACKET_COUNT 258u
+void btps_ipc_encode_sbc_v75(uint8_t h[BTPS_IPC_V75_HEADER_SIZE],uint32_t token,uint32_t crc);
+int btps_ipc_validate_sbc_v75(const uint8_t h[BTPS_IPC_V75_HEADER_SIZE],uint32_t token,
+                               const uint8_t *payload,size_t count);
 /* Header layout: 0-3 'BTPS'; 4-5 version; 6-7 channels;
  * 8-11 sampleRate; 12-15 sample frames; 16-19 6-digit token;
  * 20-23 CRC32 of signed 16-bit mono samples. */

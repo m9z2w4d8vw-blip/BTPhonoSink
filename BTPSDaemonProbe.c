@@ -15,6 +15,7 @@
 #include "BTPSLog.h"
 #include "BTPSShared.h"
 #include "BTPSV74Tone.h"
+#include "BTPSV75Fixture.h"
 #include <CoreFoundation/CoreFoundation.h>
 #include <dispatch/dispatch.h>
 #include <notify.h>
@@ -38,13 +39,13 @@ static int g_v74_notify_token=-1;
 static char g_v74_last_uuid[37]={0};
 static time_t g_v74_last_time=0;
 
-static int get_request(uint32_t *token_out,char uuid_out[37])
+static int get_request(CFStringRef key,uint32_t *token_out,char uuid_out[37])
 {
     /* Domain and key match the existing prefs writes from Settings.
      * Synchronize on the WORKER queue to avoid cached defaults after a post. */
     CFStringRef domain=CFSTR(BTPS_PREFS_DOMAIN);
     (void)CFPreferencesSynchronize(domain,kCFPreferencesCurrentUser,kCFPreferencesAnyHost);
-    CFPropertyListRef value=CFPreferencesCopyValue(CFSTR(BTPS_KEY_DAEMON_PROBE),domain,
+    CFPropertyListRef value=CFPreferencesCopyValue(key,domain,
                                                   kCFPreferencesCurrentUser,kCFPreferencesAnyHost);
     if(!value) return 0;
     int ok=0;
@@ -117,7 +118,7 @@ static void attempt_test(int notify_token)
     (void)notify_token;
     uint32_t request_token=0;
     char request_uuid[37]={0};
-    if(!get_request(&request_token,request_uuid)) {
+    if(!get_request(CFSTR(BTPS_KEY_DAEMON_PROBE),&request_token,request_uuid)) {
         BTPSSetStatus("diag.v74_ipc","REQUEST IGNORED: malformed or unreadable shared preference");
         BTPSLogNow("V74_IPC request ignored: malformed/unreadable request");
         return;
@@ -196,5 +197,56 @@ void BTPSDaemonProbeStart(void)
     } else {
         BTPSSetStatus("diag.v74_ipc","UNAVAILABLE: notify_register_dispatch=%d",r);
         BTPSLogNow("V74_IPC unavailable: Darwin notification registration status=%d",r);
+    }
+}
+
+/* v7.5: independent, explicitly triggered compressed RTP/SBC fixture send.
+ * Runs on the existing worker queue, never from a Bluetooth hook. */
+static int g_v75_notify_token=-1;
+static char g_v75_last_uuid[37]={0};
+static time_t g_v75_last_time=0;
+static void send_v75_sbc(int t) {
+    (void)t;
+    uint32_t token=0;char uuid[37]={0};
+    if(!get_request(CFSTR(BTPS_KEY_V75_SBC),&token,uuid)) {
+        BTPSSetStatus("diag.v75_sbc","FAIL: unreadable/malformed Settings request");return;
+    }
+    if(strcmp(uuid,g_v75_last_uuid)==0)return;
+    time_t now=time(NULL);
+    if(g_v75_last_time && now>=g_v75_last_time && now-g_v75_last_time<10) {
+        BTPSSetStatus("diag.v75_sbc","THROTTLED: wait at least 10 seconds");return;
+    }
+    memcpy(g_v75_last_uuid,uuid,37);g_v75_last_time=now;
+    if(btps_v75_reference_size!=BTPS_IPC_V75_FIXTURE_SIZE) {
+        BTPSSetStatus("diag.v75_sbc","FAIL: compiled fixture size differs");return;
+    }
+    BTPSSetStatus("diag.v75_sbc","STARTED: daemon sending bounded reference RTP/SBC (not over-air)");
+    BTPSLogNow("V75_SBC start pid=%d sampleBytes=%u request=%.8s NOT live Bluetooth",
+               getpid(),(unsigned)btps_v75_reference_size,uuid);
+    uint8_t h[BTPS_IPC_V75_HEADER_SIZE];
+    btps_ipc_encode_sbc_v75(h,token,btps_ipc_crc32(btps_v75_reference_rtp,btps_v75_reference_size));
+    int fd=socket(AF_INET,SOCK_STREAM,0);
+    if(fd<0){int e=errno; BTPSSetStatus("diag.v75_sbc","FAIL: socket errno=%d",e);return;}
+    if(timed_connect_loopback(fd)<0){int e=errno;BTPSSetStatus("diag.v75_sbc","FAIL: connect errno=%d",e);close(fd);return;}
+    if(send_exact(fd,h,sizeof h)!=0||send_exact(fd,btps_v75_reference_rtp,btps_v75_reference_size)!=0){
+        int e=errno;BTPSSetStatus("diag.v75_sbc","FAIL: send errno=%d",e);close(fd);return;
+    }
+    char ack[20]={0};ssize_t got=recv(fd,ack,sizeof ack-1u,0);close(fd);
+    if(got>=12 && memcmp(ack,"SBC_VERIFIED",12)==0) {
+        BTPSSetStatus("diag.v75_sbc","PASS: helper verified complete compressed SBC RTP transfer");
+        BTPSLogNow("V75_SBC PASS verified fixture frames in separate helper, no audio playback");
+    } else {
+        BTPSSetStatus("diag.v75_sbc","FAIL: no SBC_VERIFIED helper ACK (recv=%ld)",(long)got);
+        BTPSLogNow("V75_SBC FAIL ACK recv=%ld",(long)got);
+    }
+}
+void BTPSDaemonProbeStartV75(void) {
+    if(!g_v74_queue){BTPSSetStatus("diag.v75_sbc","UNAVAILABLE: v7.4 worker queue absent");return;}
+    int r=notify_register_dispatch(BTPS_NOTIFY_V75_SBC,&g_v75_notify_token,g_v74_queue,^(int t){send_v75_sbc(t);});
+    if(r==NOTIFY_STATUS_OK){
+        BTPSSetStatus("diag.v75_sbc","ARMED: compressed SBC fixture transfer opt-in, no active sockets");
+        BTPSLogNow("V75_SBC armed: 440Hz ffmpeg-encoded SBC RTP fixture, no live Bluetooth");
+    } else {
+        BTPSSetStatus("diag.v75_sbc","UNAVAILABLE: notify registration error %d",r);
     }
 }

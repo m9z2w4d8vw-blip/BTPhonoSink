@@ -9,3 +9,5 @@ void BTPSDaemonProbeStart(void);
 #ifdef __cplusplus
 }
 #endif
+
+void BTPSDaemonProbeStartV75(void);

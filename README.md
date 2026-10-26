@@ -1,97 +1,29 @@
-# BTPhonoSink v7.4 — bluetoothd → helper one-shot PCM experiment
+# BTPhonoSink v7.5 — Compressed SBC RTP transport research
 
-**Next device test: [TESTING-v7.4.md](TESTING-v7.4.md)**. v7.4 adds a new Settings action that posts a one-shot notification to `bluetoothd`. The daemon handles it on a dedicated serial queue and attempts a **bounded 880 Hz PCM transfer** to the same independent helper used by v7.3, now started in `--daemon` mode. This tests a real daemon-to-helper IPC boundary with logging and checksums. An actual A2DP Sink, inbound media transport, and reliable SBC decoding are **not yet implemented**.
+BTPhonoSink is an experimental rootless ElleKit/Theos tweak for iPhone 13 on iOS 17.0 (Dopamine 3). The long-term goal is to receive Windows laptop A2DP audio and play it on the iPhone. **This is not a functioning A2DP Sink yet.**
 
-**Safety:** Keep Legacy Sink OFF. The 5 baseline hooks remain pass-through and the 6 native Source endpoints are preserved. The optional SDP observer can be OFF for the initial test. The new sender cannot run without an explicit Settings request and does not block a Bluetooth hook thread. Maintain the v7.3 `.deb` as rollback.
+**Start here:** [TESTING-v7.5.md](TESTING-v7.5.md).
 
-> **Next test:** See [TESTING-v7.3.md](TESTING-v7.3.md). This release adds an SSH-launched mobile-user `BTPSAudioHelper` which attempts to play PCM supplied over a loopback socket by Preferences.app. It neither enables Sink service 0x110B nor receives Bluetooth frames. The helper is **not** a background daemon and is never spawned automatically. Legacy Sink stays OFF. The separate helper may be blocked from CoreAudio; that failure is a meaningful diagnostic outcome.
+## What is confirmed from the user's device tests?
 
-# BTPhonoSink v7.3: separate-process PCM transport test (plus prior SDP diagnostics)
+- v7.4: The `bluetoothd` process successfully sent 70,560 bytes of synthetic PCM over 127.0.0.1 to `BTPSAudioHelper`; the helper acknowledged it, completed playback, and the user heard the 880 Hz tone.
+- v7.4: 5/5 baseline hooks installed, six native Source endpoints registered, and the outgoing headphone path continued to work.
+- v7.1–7.3: optional pass-through SDP observer saw local Audio Source (`0x110A`) record creation, not a Sink (`0x110B`) record. That is not an external discoverability test.
 
-The v7.3 build preserves all five v6 baseline hooks and **does not** add an A2DP Sink endpoint or SDP 0x110B record. In Settings, a new OFF-by-default switch enables an **additional** pass-through hook that logs the daemon's *existing* SDP record-add metadata. Switch ON and restart `bluetoothd` **once** if choosing the advanced test; turn OFF and restart to recover the safe v6 baseline. See `TESTING-v7.1.md`.
+## Added in v7.5
 
-# BTPhonoSink — v7.1 combined development build
+- Compile a 15,996-byte, FFmpeg-encoded 440 Hz stereo SBC/RTP fixture into the `bluetoothd` tweak; the fixture contains **258 sequenced RTP packets and 258 valid SBC frames**.
+- Add **Send Compressed SBC from bluetoothd (v7.5)** to Settings. It must be explicitly requested using a fresh token; the send runs on an independent worker queue with network timeouts.
+- Extend `BTPSAudioHelper` with `--sbc` mode. The helper verifies the versioned message, exact payload size, token, CRC32, RTP sequence numbers and timestamps, profile metadata, SBC frame boundaries, and session identifiers. It extracts the compressed bitstream to a timestamped `.sbc` file under the mobile user's Documents directory.
+- Export `diag.v75_sbc` status along with the previous v7.4 status using **Save Log to iCloud Drive**.
+- Preserve the v7.4 `--daemon` (880 Hz) PCM and v7.3 default (660 Hz) PCM paths as separate tests.
 
-Research project for receiving Windows A2DP audio through classic Bluetooth on a jailbroken iPhone 13 (iOS 17, Dopamine/ElleKit, rootless arm64e), without Wi-Fi.
+**This fixture is generated offline and lives inside `bluetoothd`; it does not arrive over Bluetooth.** The new `--sbc` test **does not play audio**, decode SBC, register Sink SDP UUID `0x110B`, register an AVDTP Sink endpoint, or intercept incoming L2CAP data. Keep **Legacy Sink OFF** and optional SDP tracing OFF initially. The custom `sbc_decode.c` has a known severe clipping defect and remains excluded from v7.5 playback.
 
-**Status: the iPhone is not yet an A2DP Sink.** This version collects better information and adds an offline-testable media receive/decoder building block without introducing unverified Sink endpoints or editing SDP records. The user's v6 device log confirmed six successful native Source endpoint registrations, an SBC configuration and audio publication callback, and a live daemon heartbeat. Prior testing confirmed headphone output can work after restarting `bluetoothd`.
+## Offline verification
 
-## Current capabilities
+Run `python3 -m unittest discover -s tests -v`. The regression suite includes native compiled tests for v7.5's compressed protocol, C fixture-to-binary equivalence, packet sequence continuity, and malformed-frame rejection, plus the previous hooks, PCM and SDP checks. The SBC PCM fidelity regression remains marked as one **expected failure** until fixed; an expected failure is not a passing decoder.
 
-| Area | Implementation / evidence |
-|---|---|
-| Guarded hooks in `bluetoothd` | 5 original entrypoints; specific daemon UUID and first-four-instruction checks |
-| Optional SDP observer | OFF by default; guarded sixth pass-through hook inspecting existing SDP record-add metadata |
-| Native Source registrations | Observed and logged without modification; v5 device log showed six successes (SEIDs 1–6) |
-| Capability inspection | Decode the observed private 16-byte array with media codec at byte `+2`, covering SBC/AAC/vendor |
-| Session identity | Build tag, PID, startup session ID, hooks installed and source counts |
-| Detailed callback diagnostics | Raw args, raw return codes, and elapsed µs for the first 25 calls of each observer hook |
-| Log export | Settings debug view + clipboard copy; ~480 most recent lines per in-memory run; `/tmp/FTABHarvest` when sandbox permits |
-| Source/Sink endpoint mutation | **Disabled** (no extra calls to register any endpoint) |
-| Publish A2DP Sink SDP UUID `0x110B` | **Not implemented**; do not claim this from Source advertising callbacks |
-| RTP/SBC media depacketizer and decoding adapter | **Implemented, offline-tested**; handles complete RTP packets and produces PCM, but no live Bluetooth receive hook yet |
-| Receive live audio / play on iPhone | **Not implemented**; SDP/SEP/media transport/authorized playback helper still missing |
-| iCloud log export | Settings uses native Files picker to save a timestamped `.txt` snapshot to user-selected iCloud Drive folder |
+GitHub Actions runs these tests, builds a rootless `arm64e`-capable package, checks for the helper executable and publishes the `.deb` to the `nightly` release after a push to `main`.
 
-### What changed in v6 and v7.1
-
-- Fixed the incorrect codec decode (`record+2` instead of `record+4`), checked against your three native codec headers.
-- Added portable bounded parser `BTPSDiagnostics.c` with FNV-1a fingerprint, category counts and explicit raw-return labeling.
-- Added passive runtime timing/return-code traces for the existing registration, advertisement, configuration, SBC acceptance and audio publication hooks.
-- Added a compact diagnostic checklist at the top of the Settings log view, session ID, once-per-minute heartbeat, and detection of potentially stale events.
-- Expanded log retention to 480 lines; fixed a race when scheduling preferences flushes.
-- Added the log triage script `python3 tools/triage_log.py exported.txt` and offline C unit tests.
-- Added an optional read-only Windows PnP inspection script; it does not install drivers or alter pairing.
-- **v7:** Added separately opt-in SDP record-add observer at the verified entry `0x1e8e78`. Inspects descriptor lists, attribute IDs/types, a tentative service class ID, raw return, and assigned record handles, without modifying any SDP record or AVDTP registration.
-
-- **v7.1:** Added a native iOS Files export button in the Settings debug view, a bounded RTP/SBC media depacketizer and offline-tested decoder entry point. Fixed the SBC frame header length and CRC-byte position. See `docs/V7_1_MEDIA_PATH.md`.
-
-## Safe deployment and testing
-
-Upload all contents of this repository to [BTPhonoSink on GitHub](https://github.com/m9z2w4d8vw-blip/BTPhonoSink), including `.github/`. The already configured GitHub Actions workflow runs tests, builds the rootless `.deb`, and publishes to the rolling [`nightly` release](https://github.com/m9z2w4d8vw-blip/BTPhonoSink/releases/tag/nightly) after commits to `main`.
-
-**See [`TESTING-v7.1.md`](TESTING-v7.1.md) for exact two-stage steps and expected messages.** In particular verify `build: v7.1-sdp-media-foundation`, all 5 baseline hooks, six Source registrations, and working iPhone → headphone playback before enabling the separate observer. Do not expect Windows → iPhone audio from this build.
-
-Before changing installed tweaks, keep your working v6 `.deb` available. If the iPhone's normal Bluetooth is interrupted, stop the test, remove the experimental tweak, and restart the daemon through your usual jailbreak workflow. The five hooks are pass-through but still touch a system daemon; no zero-risk guarantee is possible.
-
-## Offline developer commands
-
-```sh
-python3 -m unittest discover -s tests -v
-python3 tools/sdp_record.py
-python3 tools/triage_log.py path/to/BTPhonoSink-exported.txt
-python3 tools/inspect_bluetoothd.py path/to/your/bluetoothd
-```
-
-The OI SDP builder requires private in-memory descriptors; the wire-format sample from `tools/sdp_record.py` must **not** be cast to the builder's pointer format. See [`docs/V6_SDP_AND_MEDIA_PLAN.md`](docs/V6_SDP_AND_MEDIA_PLAN.md) for next steps.
-
-## v7.2: device-side test checklist and output-process probe
-
-This version adds a **Verify Test Checklist** button on the Debug log screen. It
-checks the *current reported session* for the expected v7.2 build, five hooks,
-six native Source registrations, Legacy Sink OFF, and optional SDP observation.
-Headphone audibility must still be confirmed by a human; a successful callback
-alone cannot prove sound.
-
-A **Test iOS Audio Output (440 Hz)** button produces a known-good PCM/WAV test
-signal in **Preferences.app**, using AVAudioPlayer. Disconnect headphones to
-hear it on the built-in speaker. This tests a non-bluetoothd process's output
-path, not SBC decoding or Windows-to-iPhone Bluetooth receiving. The result is
-included in exported debug logs (reported API completion, NOT evidence it was
-heard).
-
-SDP observation now separately records when a locally observed `0x110A` Audio
-Source record-add returned success and if a `0x110B` class candidate ever does.
-These do **not** establish the remotely visible SDP catalog; a peer query is
-still required to confirm real discoverability.
-
-### Important decoder validation finding
-
-While preparing a packet-level playback test, an **actual ffmpeg-encoded 440 Hz
-SBC clip** was fed through the existing `BTPSMedia`/`sbc_decode.c` path. The
-current research decoder produced **>99% samples clipped** and did not
-reconstruct the 440 Hz tone. Earlier packet tests only checked successful
-parsing and sample counts, not audio fidelity. **Do not activate the live RTP
-receive hook** until the decoder is replaced or validated against known-good
-reference PCM and CRC/bit allocation cases. The Settings audio test deliberately
-uses uncompressed PCM to isolate iOS output access from decoder correctness.
+For architecture and earlier testing details, see `docs/`, `TESTING-v7.4.md`, `TESTING-v7.3.md`, `TESTING-v7.2.md`, `TESTING-v7.1.md`.

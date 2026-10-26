@@ -2,7 +2,7 @@ Package: com.parv.btphonosink
 Name: BTPhonoSink
 Version: 0.1.0
 Architecture: iphoneos-arm64
-Description: A2DP research diagnostics and manual two-process PCM playback test (not a functional Bluetooth Sink)
+Description: A2DP research diagnostics, PCM IPC and compressed SBC/RTP loopback validation (not an A2DP Sink)
 Author: Parv
 Section: Tweaks
 Depends: mobilesubstrate, preferenceloader, firmware (>= 14.0)
