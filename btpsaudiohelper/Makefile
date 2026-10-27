@@ -4,8 +4,8 @@ ARCHS := arm64 arm64e
 TARGET := iphone:clang:latest:15.0
 include $(THEOS)/makefiles/common.mk
 TOOL_NAME = BTPSAudioHelper
-BTPSAudioHelper_FILES = main.m BTPSIPCProtocol.c BTPSV75RTP.c BTPSMedia.c sbc_decode.c
-BTPSAudioHelper_CFLAGS = -fobjc-arc -I..
+BTPSAudioHelper_FILES = main.m BTPSIPCProtocol.c BTPSV75RTP.c BTPSMedia.c sbc_decode.c BTPSV76Decode.c vendor_sbc/sbc.c vendor_sbc/bits.c
+BTPSAudioHelper_CFLAGS = -fobjc-arc -std=gnu11 -I.. -I./vendor_sbc
 BTPSAudioHelper_FRAMEWORKS = Foundation AVFoundation
 BTPSAudioHelper_INSTALL_PATH = /usr/bin
 include $(THEOS_MAKE_PATH)/tool.mk

@@ -18,6 +18,7 @@
 #import <unistd.h>
 #import "../BTPSIPCProtocol.h"
 #import "../BTPSV75RTP.h"
+#import "BTPSV76Decode.h"
 
 static void w16(uint8_t *p,uint16_t v){p[0]=(uint8_t)v;p[1]=(uint8_t)(v>>8);}
 static void w32(uint8_t *p,uint32_t v){for(int i=0;i<4;i++)p[i]=(uint8_t)(v>>(i*8));}
@@ -30,6 +31,42 @@ static NSData *wav_from_pcm(const uint8_t *pcm) {
     memcpy(w+36,"data",4);w32(w+40,BTPS_IPC_PCM_BYTES);
     memcpy(w+44,pcm,BTPS_IPC_PCM_BYTES);
     return wav;
+}
+/* PCM from decoded SBC; stereo, 44.1kHz 16-bit interleaved. */
+static NSData *wav_from_sbc_pcm(const int16_t *pcm,size_t frames) {
+    size_t nbytes=frames*2u*sizeof(int16_t);
+    if(frames!=33024u || nbytes>UINT32_MAX-44u)return nil;
+    NSMutableData *wav=[NSMutableData dataWithLength:44u+nbytes];
+    uint8_t *w=wav.mutableBytes;
+    memcpy(w,"RIFF",4);w32(w+4,(uint32_t)(36u+nbytes));memcpy(w+8,"WAVEfmt ",8);
+    w32(w+16,16);w16(w+20,1);w16(w+22,2);w32(w+24,44100);
+    w32(w+28,44100u*4u);w16(w+32,4);w16(w+34,16);
+    memcpy(w+36,"data",4);w32(w+40,(uint32_t)nbytes);memcpy(w+44,pcm,nbytes);
+    return wav;
+}
+static int play_decoded_sbc(NSData *wav) {
+    NSError *err=nil;
+    AVAudioSession *session=[AVAudioSession sharedInstance];
+    if(![session setCategory:AVAudioSessionCategoryPlayback error:&err] ||
+       ![session setActive:YES error:&err]) {
+        fprintf(stderr,"AUDIO_FAIL stage=session error=%s\n",(err.localizedDescription?:@"unknown").UTF8String);
+        return 1;
+    }
+    AVAudioPlayer *player=[[AVAudioPlayer alloc]initWithData:wav error:&err];
+    if(!player || ![player prepareToPlay] || ![player play]) {
+        fprintf(stderr,"AUDIO_FAIL stage=player error=%s\n",(err.localizedDescription?:@"start failed").UTF8String);
+        [session setActive:NO error:NULL];return 2;
+    }
+    puts("SBC_AUDIO_STARTED source=decoded_sbc_440Hz stereo=1 rate=44100");fflush(stdout);
+    NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:4.0];
+    while(player.isPlaying && [deadline timeIntervalSinceNow]>0)
+        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+    BOOL completed=!player.isPlaying;
+    [player stop];
+    [session setActive:NO withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:NULL];
+    printf("SBC_AUDIO_%s API completion; confirm 440 Hz was actually heard\n",completed?"FINISHED":"TIMEOUT");
+    fflush(stdout);
+    return completed?0:3;
 }
 static int recv_exact(int fd,void *buffer,size_t n) {
     uint8_t *p=buffer;
@@ -67,9 +104,10 @@ int main(int argc,const char **argv) {
         /* Existing CLI preserved: no args or optional 15..180 second timeout.
          * New --daemon mode expects a v2 frame from bluetoothd, never Settings. */
         int daemon_mode=argc>=2 && strcmp(argv[1],"--daemon")==0;
-        int sbc_mode=argc>=2 && strcmp(argv[1],"--sbc")==0;
+        int play_sbc_mode=argc>=2 && strcmp(argv[1],"--sbc-play")==0;
+        int sbc_mode=play_sbc_mode || (argc>=2 && strcmp(argv[1],"--sbc")==0);
         int at=(daemon_mode||sbc_mode)?2:1;
-        if(argc>at+1){fprintf(stderr,"usage: BTPSAudioHelper [--daemon|--sbc] [timeout_seconds: 15..180]\n");return 2;}
+        if(argc>at+1){fprintf(stderr,"usage: BTPSAudioHelper [--daemon|--sbc|--sbc-play] [timeout_seconds: 15..180]\n");return 2;}
         int seconds=120;
         if(argc==at+1){char *end=NULL;long val=strtol(argv[at],&end,10);
             if(!end||*end||val<15||val>180){fprintf(stderr,"timeout must be 15..180 seconds\n");return 2;} seconds=(int)val;}
@@ -82,9 +120,9 @@ int main(int argc,const char **argv) {
         if(bind(listener,(struct sockaddr*)&address,sizeof(address))!=0 || listen(listener,1)!=0){
             perror("bind/listen loopback");close(listener);return 2;}
         printf("BTPS_%s_READY pid=%ld port=%d token=%06u timeout=%ds\n",
-               sbc_mode?"V75_SBC":(daemon_mode?"V74_DAEMON":"V74_SETTINGS"),(long)getpid(),BTPS_IPC_PORT,token,seconds);
+               play_sbc_mode?"V76_SBC_PLAY":(sbc_mode?"V75_SBC":(daemon_mode?"V74_DAEMON":"V74_SETTINGS")),(long)getpid(),BTPS_IPC_PORT,token,seconds);
         printf("On iPhone: Settings > BTPhonoSink > Debug log > %s; enter token %06u.\n",
-               sbc_mode?"Send compressed SBC from bluetoothd (v7.5)":(daemon_mode?"Send PCM from bluetoothd (v7.4)":"Send PCM to separate helper (v7.3)"),token);
+               sbc_mode?"Send SBC from bluetoothd (v7.5/7.6)":(daemon_mode?"Send PCM from bluetoothd (v7.4)":"Send PCM to separate helper (v7.3)"),token);
         fflush(stdout);
         fd_set set;FD_ZERO(&set);FD_SET(listener,&set);struct timeval timer={seconds,0};
         int ready=select(listener+1,&set,NULL,NULL,&timer);
@@ -121,7 +159,47 @@ int main(int argc,const char **argv) {
             BOOL saved=[[NSData dataWithBytes:frames length:decoded_size] writeToFile:path options:NSDataWritingAtomic error:&err];
             if(saved)printf("SBC_CAPTURE_SAVED path=%s bytes=%zu (compressed stream only; not decoded/played)\n",path.UTF8String,decoded_size);
             else printf("SBC_CAPTURE_SAVE_FAIL %s (transport validation still passed)\n",(err.localizedDescription?:@"unknown").UTF8String);
-            reply(fd,"SBC_VERIFIED");close(fd);free(blob);free(frames);
+            /* ACK is about framing; decode and audio output are independently tested below. */
+            reply(fd,"SBC_VERIFIED");close(fd);free(blob);
+            if(play_sbc_mode) {
+                const size_t slot_count=2u*33024u;
+                int16_t *pcm=(int16_t *)calloc(slot_count,sizeof(int16_t));
+                size_t fcount=0,nsamples=0;unsigned rate=0,channels=0;
+                int dr=pcm ? btps_v76_decode_sbc(frames,decoded_size,pcm,slot_count,&fcount,&nsamples,&rate,&channels) : -20;
+                free(frames);
+                if(dr!=0) {
+                    printf("SBC_DECODE_FAIL code=%d frames=%zu samples_per_channel=%zu\n",dr,fcount,nsamples);
+                    free(pcm);return 8;
+                }
+                size_t clipped=0;long double sumsq=0;
+                for(size_t k=0;k<nsamples*2u;k++){
+                    int a=pcm[k]<0?-(int)pcm[k]:(int)pcm[k];
+                    if(a>=32000)clipped++;
+                    sumsq+=(long double)pcm[k]*(long double)pcm[k];
+                }
+                double rms=sqrt((double)(sumsq/(nsamples*2u)))/32768.0;
+                double clip_rate=(double)clipped/(double)(nsamples*2u);
+                printf("SBC_DECODE_PASS frames=%zu samples_per_channel=%zu rate=%u channels=%u rms=%.6f clipped=%.4f%%\n",
+                       fcount,nsamples,rate,channels,rms,clip_rate*100.0);
+                fflush(stdout);
+                if(clip_rate>0.01 || rms<0.01 || rms>0.4) {
+                    printf("SBC_FIDELITY_FAIL unexpected output levels; playback skipped\n");free(pcm);return 9;
+                }
+                NSData *wav=wav_from_sbc_pcm(pcm,nsamples);free(pcm);
+                if(!wav){puts("SBC_WAV_FAIL allocation");return 10;}
+                NSString *wav_path=[dir stringByAppendingPathComponent:
+                    [NSString stringWithFormat:@"BTPhonoSink-v76-%ld-%lld.wav",(long)getpid(),(long long)[[NSDate date] timeIntervalSince1970]]];
+                NSError *wav_error=nil;
+                BOOL saved_pcm=[wav writeToFile:wav_path options:NSDataWritingAtomic error:&wav_error];
+                if(saved_pcm)printf("SBC_DECODED_WAV_SAVED path=%s bytes=%zu\n",wav_path.UTF8String,(size_t)wav.length);
+                else printf("SBC_WAV_SAVE_FAIL error=%s\n",(wav_error.localizedDescription?:@"unknown").UTF8String);
+                fflush(stdout);
+                int playback=play_decoded_sbc(wav);
+                printf("BTPS_V76_RESULT ipc=PASS rtp=PASS sbc_frames=PASS decode=PASS audio_api=%s live_bluetooth=NO\n",
+                    playback==0?"FINISHED":"FAILED");fflush(stdout);
+                return playback==0?0:11;
+            }
+            free(frames);
             printf("BTPS_V75_RESULT ipc=PASS rtp=PASS sbc_frames=PASS pcm_decode=NOT_TESTED live_bluetooth=NO\n");
             fflush(stdout);
             return 0;
