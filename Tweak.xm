@@ -267,6 +267,9 @@ static btps_fn_t g_v82_sig_orig = NULL;
 static volatile unsigned g_v82_sig_calls = 0;
 static volatile unsigned g_v82_signal_hook_ok = 0;
 static volatile unsigned g_v82_sdp_hook_ok = 0;
+static btps_fn_t g_v82_tx_orig = NULL;
+static volatile unsigned g_v82_tx_calls = 0;
+static volatile unsigned g_v82_tx_hook_ok = 0;
 
 /* Optional one-shot Sink SEP capacity experiment. Unlike v4, this does not
  * consume slots before Apple's six native Sources. Disabled by default;
@@ -657,12 +660,93 @@ static void btps_v82_install_rx(uintptr_t base,int uuid_ok)
     BTPSLogNow("V82 RX dispatcher hooked at image+0xD3B08; incoming signaling only");
 }
 
+/* AVDTP SIGNALING TX, never media: verified image+0xDA414.
+ * Caller +0xDA36C constructs an AVDTP response PDU and tail-branches here;
+ * arguments x0=CID, x1=encoded AVDTP PDU pointer, x2=byte length.
+ * The underlying routine queues the packet for L2CAP transmission; returning
+ * zero is NOT evidence of over-the-air delivery or remote acceptance.
+ * Experimental hook is strictly pass-through, bounded and one-shot-gated. */
+#define BTPS_V82_TX_QUEUE 0x000da414ul
+static const uint32_t BTPS_V82_TX_SIG[4] = {0xd503237fu, 0xd10103ffu, 0xa90157f6u, 0xa9024ff4u};
+static uint64_t btps_v82_transmit_signal(uint64_t cid, uint64_t packet, uint64_t length,
+                                         uint64_t a3, uint64_t a4, uint64_t a5,
+                                         uint64_t a6, uint64_t a7)
+{
+    unsigned n = __sync_add_and_fetch(&g_v82_tx_calls, 1u);
+    int sampled = n <= 128u;
+    unsigned tx = 0, ptype = 0, mtype = 0, sig = 0;
+    uint8_t bytes[96];
+    size_t take = 0;
+    if (sampled && length >= 2u && length <= 1024u) {
+        take = (size_t)(length < sizeof bytes ? length : sizeof bytes);
+        if (btps_peek(packet, bytes, take)) {
+            tx = (unsigned)((bytes[0] >> 4) & 15u);
+            ptype = (unsigned)((bytes[0] >> 2) & 3u);
+            mtype = (unsigned)(bytes[0] & 3u);
+            sig = (unsigned)(bytes[1] & 63u);
+            BTPSLogNow("V82 TX_SIGNAL #%u CID=%#llx tx=%u pkt=%u msg=%u sig=%u len=%llu",
+                       n, (unsigned long long)cid, tx, ptype, mtype, sig,
+                       (unsigned long long)length);
+            if (mtype == 3u && take >= 3u)
+                BTPSLogNow("V82 TX_REJECT #%u sig=%u last_error_byte=0x%02x (inspect complete raw PDU)",
+                           n, sig, (unsigned)bytes[take-1u]);
+            for (size_t off = 0; off < take; off += 32u) {
+                size_t count = take-off < 32u ? take-off : 32u;
+                char hex[32u*3u+1u]; size_t p = 0;
+                for (size_t i = 0; i < count; ++i)
+                    p += (size_t)snprintf(hex+p, sizeof hex-p, "%02x%s", bytes[off+i],
+                                          i+1u == count ? "" : " ");
+                BTPSLogNow("V82 TX_RAW #%u +%u %s", n, (unsigned)off, hex);
+            }
+            if ((uint64_t)take < length)
+                BTPSLogNow("V82 TX_RAW #%u truncated at %u of %llu bytes", n,
+                           (unsigned)take, (unsigned long long)length);
+        } else BTPSLogNow("V82 TX_SIGNAL #%u unreadable packet pointer=%#llx",
+                          n, (unsigned long long)packet);
+    } else if (sampled) {
+        BTPSLogNow("V82 TX_SIGNAL #%u length outside safe capture range: %llu",
+                   n, (unsigned long long)length);
+    }
+    uint64_t ret = g_v82_tx_orig
+      ? g_v82_tx_orig(cid, packet, length, a3, a4, a5, a6, a7) : 0xFFFFFFFFu;
+    if (sampled) {
+        BTPSLogNow("V82 TX_QUEUE_RESULT #%u ret=%#llx (not proof of air delivery)",
+                   n, (unsigned long long)ret);
+        BTPSSetStatus("diag.v82.tx", "TX capture active: %u queued attempts, last CID=%#llx signal=%u msg=%u ret=%#llx",
+                      n, (unsigned long long)cid, sig, mtype, (unsigned long long)ret);
+    }
+    return ret;
+}
+static void btps_v82_install_tx(uintptr_t base, int uuid_ok)
+{
+    if (!g_v82_armed || !uuid_ok) return;
+    uintptr_t target = base + BTPS_V82_TX_QUEUE;
+    uint32_t words[4] = {0};
+    if (!btps_peek(target, words, sizeof words) ||
+        memcmp(words, BTPS_V82_TX_SIG, sizeof words) != 0) {
+        BTPSSetStatus("diag.v82.tx", "REFUSED: exact AVDTP TX queue signature mismatch");
+        BTPSLogNow("V82 TX refused: image+0xDA414 signature mismatch");
+        return;
+    }
+    void *trampoline = NULL;
+    MSHookFunction((void *)target, (void *)btps_v82_transmit_signal, &trampoline);
+    if (!trampoline) {
+        BTPSSetStatus("diag.v82.tx", "FAILED: no TX trampoline");
+        return;
+    }
+    g_v82_tx_orig = (btps_fn_t)trampoline;
+    g_v82_tx_hook_ok = 1u;
+    BTPSSetStatus("diag.v82.tx", "installed at image+0xDA414; TX AVDTP PDU + queue result, no radio delivery claim");
+    BTPSLogNow("V82 TX hook installed at image+0xDA414 (encoded AVDTP signaling queue; pass-through)");
+}
+
 /* AVDTP V8.2 trial: exact six native Source endpoints must succeed first.
  * The copied SBC codec buffer and its SEID output byte have process lifetime. */
 static void btps_v82_attempt_sink_once(void)
 {
     if (!g_v82_armed || !g_v81_shadow_returned || !g_v82_caps_ready ||
         !g_orig[BTPS_H_REGISTER] || !g_v82_signal_hook_ok || !g_v82_sdp_hook_ok ||
+        !g_v82_tx_hook_ok ||
         g_native_source_success != 6 ||
         !__sync_bool_compare_and_swap(&g_v82_sink_attempted, 0, 1)) return;
     uint64_t context = 0;
@@ -1128,7 +1212,7 @@ static void install_hooks(uintptr_t base, int uuid_ok)
     BTPSSetStatus("diag.v82.sdp", "NOT published");
     BTPSSetStatus("diag.v82.rx", "NOT hooked");
     BTPSSetStatus("diag.v82.media", "UNOBSERVED: media callback not hooked; no PASS possible in this build");
-    BTPSSetStatus("diag.v82.tx", "UNOBSERVED: outbound ACCEPT/REJECT responses not hooked");
+    BTPSSetStatus("diag.v82.tx", "OFF: experimental TX hook not armed");
     BTPSSetStatus("diag.session_id", "%ld-%d", (long)time(NULL), (int)getpid());
     BTPSLogNow("SESSION start pid=%d optional one-shot 7-slot initializer config, OFF by default; no Sink registration", (int)getpid());
 
@@ -1168,6 +1252,7 @@ static void install_hooks(uintptr_t base, int uuid_ok)
     install_hooks((uintptr_t)mh, uuid_ok);
     btps_v80_install_config_observer((uintptr_t)mh, uuid_ok);
     btps_v82_install_rx((uintptr_t)mh, uuid_ok);
+    btps_v82_install_tx((uintptr_t)mh, uuid_ok);
     install_optional_sdp_probe((uintptr_t)mh, uuid_ok);
     /* Explicit user request only; no sockets or audio on Bluetooth callback threads. */
     if (uuid_ok && g_orig[BTPS_H_REGISTER] && g_orig[BTPS_H_ADVERTISE]) {
