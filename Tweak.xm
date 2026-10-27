@@ -74,7 +74,7 @@
 #include "BTPSV77Sink.h"
 #include "BTPSV82SDP.h"
 
-#define BTPS_BUILD_TAG "v8.3-post-source-audio-context"
+#define BTPS_BUILD_TAG "v8.4-audio-table-pointer-fix"
 
 /* AVDTP constants, used for native Source registration diagnostics */
 #define BTPS_AVDTP_TSEP_SRC 0u
@@ -786,7 +786,9 @@ static void btps_v83_attempt_post_source(uint64_t audio_context)
         uint32_t second;
         uint64_t table;
     } meta = {};
-    if (!btps_peek(audio_context + 0x68u, &meta, sizeof meta) ||
+    if (!btps_peek(audio_context + 0x68u, &meta.used, sizeof meta.used) ||
+        !btps_peek(audio_context + 0x6cu, &meta.second, sizeof meta.second) ||
+        !btps_peek(audio_context + 0x78u, &meta.table, sizeof meta.table) ||
         meta.used != 6u || meta.second != 6u || !meta.table) {
         BTPSLogNow("V83 REFUSED: audio table metadata expected (6,6,nonzero) observed (%u,%u,%#llx)",
             meta.used, meta.second, (unsigned long long)meta.table); return;

@@ -83,7 +83,7 @@ class TestV79(unittest.TestCase):
                        '0x0ce470u', '0x0ce4d4u', '0x0ce4f4u', '0x1f5f48u',
                        '0x984a60u', '0x9768b0u']:
             self.assertIn(offset, source)
-        self.assertIn('v8.3-post-source-audio-context', source)
+        self.assertIn('v8.4-audio-table-pointer-fix', source)
     def test_documented_limitations(self):
         docs=(ROOT/'docs/V79_AVDTP_ALLOCATION_FINDINGS.md').read_text()
         for needle in ['0xCE428', '0xCE4F4', '0x984a60', 'NOT', 'no allocation']:
