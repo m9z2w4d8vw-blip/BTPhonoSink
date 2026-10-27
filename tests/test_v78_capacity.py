@@ -46,7 +46,7 @@ class TestV78(unittest.TestCase):
         self.assertNotEqual(self.analyze(mem,len(mem),0,ctypes.byref(o)),0)
     def test_source_safety(self):
         src=(ROOT/'Tweak.xm').read_text()
-        self.assertIn('v8.1-one-shot-seven-slot',src)
+        self.assertRegex(src, r'#define BTPS_BUILD_TAG "v[0-9]+\.[0-9]+[^"]*"')
         self.assertIn('btps_v78_snapshot_capacity();',src)
         self.assertIn('if (sources == 6u)',src)
         self.assertIn('g_v78_exact_uuid = uuid_ok;',src)
@@ -54,7 +54,9 @@ class TestV78(unittest.TestCase):
         self.assertNotIn('btps_v77_attempt_after_sources(',src)
         self.assertNotIn('btps_v77_attempt_after_sources();',src)
         self.assertIn('BTPSV78Capacity.c',(ROOT/'Makefile').read_text())
-        self.assertNotIn('BTPS_AVDTP_TSEP_SNK',src)
+        self.assertIn('#define BTPS_AVDTP_TSEP_SNK 1u',src)
+        self.assertIn('decisive_requested && g_v81_seven_armed && !BTPSExperimentsEnabled()',src)
+        self.assertIn('g_native_source_success != 6',src)
     def test_settings_no_trial_toggle(self):
         d=plistlib.loads((ROOT/'btphonosinkprefs/Resources/Root.plist').read_bytes())
         self.assertNotIn('BTPhonoSinkV77SinkTrial',[x.get('key') for x in d['items']])

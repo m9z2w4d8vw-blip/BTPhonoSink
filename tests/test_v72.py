@@ -13,7 +13,7 @@ class V72Tests(unittest.TestCase):
    self.assertIn(text,src)
  def test_existing_daemon_hook_did_not_add_registration_or_media_hook(self):
   tweak=(ROOT/'Tweak.xm').read_text()
-  self.assertIn('v8.1-one-shot-seven-slot',tweak)
+  self.assertRegex(tweak, r'#define BTPS_BUILD_TAG "v[0-9]+\.[0-9]+[^"]*"')
   self.assertNotIn('hook_media_recv(',tweak)
   self.assertNotIn('btphonosink_on_rtp_packet(',tweak)
   self.assertIn('static uint16_t btps_sdp_class_hint(',tweak)

@@ -43,13 +43,15 @@ class TrialTest(unittest.TestCase):
     def test_reject_invalid_size_or_mode(self):
         for mode,length in ((2,32),(-1,32),(1,3),(1,31)):
             self.assertNotEqual(self.call(arm=mode,length=length)[0],0)
-    def test_default_off_and_no_registration(self):
+    def test_default_off_and_registration_requires_separate_one_shot_arm(self):
         plist=plistlib.loads((ROOT/'btphonosinkprefs/Resources/Root.plist').read_bytes())
         switches=[x for x in plist['items'] if x.get('key')=='BTPhonoSinkV81SevenOnce']
         self.assertEqual(len(switches),1)
         self.assertIs(switches[0]['default'],False)
         self.assertEqual(switches[0]['defaults'],'com.apple.bluetooth')
-        self.assertIn('ALL Sink registration experiments disabled',SRC)
+        self.assertIn('decisive_requested && g_v81_seven_armed && !BTPSExperimentsEnabled()',SRC)
+        self.assertIn('!g_v82_signal_hook_ok || !g_v82_sdp_hook_ok',SRC)
+        self.assertIn('g_native_source_success != 6',SRC)
         self.assertNotIn('btps_v77_attempt_after_sources(',SRC)
         self.assertIn('g_orig[BTPS_H_REGISTER]',SRC)
     def test_one_shot_cleared_before_hook(self):

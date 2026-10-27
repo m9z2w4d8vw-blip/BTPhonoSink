@@ -15,18 +15,26 @@ class OptionalSDPProbeTests(unittest.TestCase):
         self.assertEqual(len(toggles),1)
         self.assertFalse(toggles[0]['default'])
         self.assertEqual(toggles[0]['cell'],'PSSwitchCell')
-        self.assertIn('if (!btps_sdp_probe_requested())',OBSERVER)
+        self.assertIn('if (!btps_sdp_probe_requested() && !g_v82_armed)',OBSERVER)
+        self.assertIn('BTPSSetStatus("diag.sdp_probe", "OFF (default); no SDP hook installed")',OBSERVER)
     def test_exact_build_and_prologue_signature_gated(self):
         self.assertIn('if (!uuid_ok)',OBSERVER)
         self.assertIn('0x001e8e78',OBSERVER)
         for signature in ('0xd503237f','0xa9bd57f6','0xa9014ff4','0xa9027bfd'):
             self.assertIn(signature,OBSERVER)
         self.assertIn('memcmp(current, BTPS_SDP_RECORD_ADD_SIG',OBSERVER)
-    def test_no_new_endpoint_or_record_registration(self):
+    def test_original_record_is_passed_through_once_and_sink_is_strictly_gated(self):
+        # The existing/native record is always forwarded once without mutation.
         self.assertEqual(OBSERVER.count('g_sdp_orig(descriptor, handle_out)'),1)
+        # The additional record is v8.2-only, never part of passive observation.
+        self.assertEqual(OBSERVER.count('g_sdp_orig((uint64_t)(uintptr_t)candidate,'),1)
+        self.assertIn('ret == 0 && service_hint == 0x110a && g_v82_armed &&',OBSERVER)
+        self.assertIn('g_v82_sink_accepted && !g_v82_sdp_registered && g_sdp_orig',OBSERVER)
+        self.assertIn('__sync_bool_compare_and_swap(&g_v82_sdp_registered, 0u, 1u)',OBSERVER)
+        self.assertIn('BTPSV82SinkSDPDescriptor()',OBSERVER)
+        self.assertIn('remote SDP 0x110B NOT VERIFIED',OBSERVER)
         self.assertNotIn('g_orig[BTPS_H_REGISTER](',OBSERVER)
         self.assertNotIn('OI_SDPDB_AddServiceRecord(',OBSERVER)
-        self.assertIn('SDP records/SEPs will NOT be added',OBSERVER)
     def test_bounded_and_safe_private_reads(self):
         self.assertIn('btps_peek(descriptor, header, sizeof header)',OBSERVER)
         self.assertIn('unsigned limit = count < 8u ? count : 8u;',OBSERVER)

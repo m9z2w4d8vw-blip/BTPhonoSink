@@ -75,7 +75,7 @@ class SBCStreamTests(unittest.TestCase):
   self.assertEqual(self.check(h,token,wire,len(self.fixture)),0)
  def test_safety_workflow(self):
   daemon=(ROOT/'Tweak.xm').read_text()
-  self.assertIn('"v8.1-one-shot-seven-slot"',daemon)
+  self.assertRegex(daemon, r'#define BTPS_BUILD_TAG "v[0-9]+\.[0-9]+[^"]*"')
   self.assertIn('BTPSDaemonProbeStartV75();',daemon)
   self.assertIn('if (uuid_ok && g_orig[BTPS_H_REGISTER] && g_orig[BTPS_H_ADVERTISE]) {',daemon)
   worker=(ROOT/'BTPSDaemonProbe.c').read_text()
@@ -87,7 +87,9 @@ class SBCStreamTests(unittest.TestCase):
   for token in ('--sbc','SBC_RECEIVED','BTPS_V75_RESULT','V75_SBC','SBC_VERIFIED','btps_v75_extract_sbc'):
    self.assertIn(token,helper)
   self.assertIn('Save Log to iCloud Drive', (ROOT/'btphonosinkprefs/BTPSLogViewController.m').read_text())
-  self.assertNotIn('BTPS_AVDTP_TSEP_SNK',daemon)
+  self.assertIn('#define BTPS_AVDTP_TSEP_SNK 1u',daemon)
+  self.assertIn('decisive_requested && g_v81_seven_armed && !BTPSExperimentsEnabled()',daemon)
+  self.assertIn('g_native_source_success != 6',daemon)
   self.assertIn('btps_v78_snapshot_capacity();',daemon)
   for file in ('BTPSIPCProtocol.c','BTPSV75RTP.c','BTPSMedia.c','sbc_decode.c'):
    self.assertEqual((ROOT/file).read_bytes(),(ROOT/'btpsaudiohelper'/file).read_bytes())
