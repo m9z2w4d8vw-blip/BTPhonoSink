@@ -65,7 +65,7 @@
 #include "BTPSShared.h"
 #include "BTPSDaemonProbe.h"
 
-#define BTPS_BUILD_TAG "v7.5-sbc-rtp-ipc-probe"
+#define BTPS_BUILD_TAG "v7.6-sbc-playback"
 
 /* AVDTP constants, used for native Source registration diagnostics */
 #define BTPS_AVDTP_TSEP_SRC 0u
