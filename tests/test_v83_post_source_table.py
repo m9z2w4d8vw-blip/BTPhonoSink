@@ -16,7 +16,9 @@ class TestV83PostSource(unittest.TestCase):
             self.assertIn(x,S)
     def test_memory_and_gate(self):
         self.assertIn('calloc(7u, 32u)',S)
-        self.assertIn('calloc(3u, 16u)',S)
+        self.assertIn('calloc(1u, 3u * 16u + 4u)',S)
+        self.assertIn('0x31u, 0x15u, 0x02u, 0xfau',S)
+        self.assertIn('memcpy(new_caps + 0x18u, &sink_codec_ptr',S)
         self.assertIn('memcpy((void *)(uintptr_t)(audio_context + 0x78u)',S)
         self.assertIn('audio_context + 0x68u',S)
         self.assertIn('audio_context + 0x6cu',S)

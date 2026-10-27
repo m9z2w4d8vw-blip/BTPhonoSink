@@ -74,7 +74,7 @@
 #include "BTPSV77Sink.h"
 #include "BTPSV82SDP.h"
 
-#define BTPS_BUILD_TAG "v8.4-audio-table-pointer-fix"
+#define BTPS_BUILD_TAG "v8.5-sink-sbc-dual-rate"
 
 /* AVDTP constants, used for native Source registration diagnostics */
 #define BTPS_AVDTP_TSEP_SRC 0u
@@ -797,7 +797,7 @@ static void btps_v83_attempt_post_source(uint64_t audio_context)
        allocator guarantees zero-initialized entries. calloc/free use the
        same libSystem allocator family. The daemon's destructor calls free. */
     uint8_t *new_table = (uint8_t *)calloc(7u, 32u);
-    uint8_t *new_caps = (uint8_t *)calloc(3u, 16u);
+    uint8_t *new_caps = (uint8_t *)calloc(1u, 3u * 16u + 4u);
     if (!new_table || !new_caps) {
         BTPSLogNow("V83 REFUSED: calloc failed"); free(new_caps); free(new_table); return;
     }
@@ -817,6 +817,15 @@ static void btps_v83_attempt_post_source(uint64_t audio_context)
     if (new_caps[0] != 1u || new_caps[16] != 7u || new_caps[18] != 0u ||
         new_caps[19] != 4u || new_caps[32] != 8u ||
         cap_context != audio_context) goto reject_before_swap;
+    /* Entry 7 alone owns the SBC codec bytes. The native Source codec
+       object points at audio_context (11 15 02 FA); do NOT edit it.
+       A 4-byte tail in the same new_caps allocation keeps one owner/free. */
+    {
+        static const uint8_t kSinkSBC[4] = {0x31u, 0x15u, 0x02u, 0xfau};
+        memcpy(new_caps + 3u * 16u, kSinkSBC, sizeof kSinkSBC);
+        uint64_t sink_codec_ptr = (uint64_t)(uintptr_t)(new_caps + 3u * 16u);
+        memcpy(new_caps + 0x18u, &sink_codec_ptr, sizeof sink_codec_ptr);
+    }
     {
         uint32_t seid = 7u, ncap = 3u;
         uint64_t pcap = (uint64_t)(uintptr_t)new_caps;
