@@ -29,7 +29,7 @@ class OptionalSDPProbeTests(unittest.TestCase):
         # The additional record is v8.2-only, never part of passive observation.
         self.assertEqual(OBSERVER.count('g_sdp_orig((uint64_t)(uintptr_t)candidate,'),1)
         self.assertIn('ret == 0 && service_hint == 0x110a && g_v82_armed &&',OBSERVER)
-        self.assertIn('g_v82_sink_accepted && !g_v82_sdp_registered && g_sdp_orig',OBSERVER)
+        self.assertIn('g_v82_sink_accepted && g_v83_audio_extended &&',OBSERVER)
         self.assertIn('__sync_bool_compare_and_swap(&g_v82_sdp_registered, 0u, 1u)',OBSERVER)
         self.assertIn('BTPSV82SinkSDPDescriptor()',OBSERVER)
         self.assertIn('remote SDP 0x110B NOT VERIFIED',OBSERVER)

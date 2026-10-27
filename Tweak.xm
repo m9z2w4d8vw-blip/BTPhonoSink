@@ -59,6 +59,7 @@
 #include "BTPSDiagnostics.h"
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <substrate.h>
@@ -73,7 +74,7 @@
 #include "BTPSV77Sink.h"
 #include "BTPSV82SDP.h"
 
-#define BTPS_BUILD_TAG "v8.2-native-sink-signaling-probe"
+#define BTPS_BUILD_TAG "v8.3-post-source-audio-context"
 
 /* AVDTP constants, used for native Source registration diagnostics */
 #define BTPS_AVDTP_TSEP_SRC 0u
@@ -270,6 +271,25 @@ static volatile unsigned g_v82_sdp_hook_ok = 0;
 static btps_fn_t g_v82_tx_orig = NULL;
 static volatile unsigned g_v82_tx_calls = 0;
 static volatile unsigned g_v82_tx_hook_ok = 0;
+
+/* Existing SDP insertion routine, shared with the v8.3 post-registration path. */
+typedef uint64_t (*btps_sdp_fn_t)(uint64_t, uint64_t);
+static btps_sdp_fn_t g_sdp_orig = NULL;
+
+/* v8.3: the higher-level audio table is separate from the AVDTP SEP table.
+ * One-shot hook is installed at the exact verified registration-loop entry.
+ * It calls the native loop first, THEN expands the audio table to seven.
+ */
+#define BTPS_V83_SOURCE_REG_ENTRY 0x003b4128ul
+static const uint32_t BTPS_V83_SOURCE_REG_SIG[4] = {
+    0xd503237fu, 0xd10103ffu, 0xa90157f6u, 0xa9024ff4u
+};
+typedef uint64_t (*btps_v83_source_reg_fn_t)(uint64_t);
+static btps_v83_source_reg_fn_t g_v83_source_reg_orig = NULL;
+static volatile unsigned g_v83_source_reg_hook_ok = 0;
+static volatile unsigned g_v83_audio_extended = 0;
+static void *g_v83_leaked_original_table = NULL; /* intentionally retained; see TESTING-v8.3 */
+
 
 /* Optional one-shot Sink SEP capacity experiment. Unlike v4, this does not
  * consume slots before Apple's six native Sources. Disabled by default;
@@ -740,40 +760,175 @@ static void btps_v82_install_tx(uintptr_t base, int uuid_ok)
     BTPSLogNow("V82 TX hook installed at image+0xDA414 (encoded AVDTP signaling queue; pass-through)");
 }
 
-/* AVDTP V8.2 trial: exact six native Source endpoints must succeed first.
- * The copied SBC codec buffer and its SEID output byte have process lifetime. */
-static void btps_v82_attempt_sink_once(void)
+/* v8.3 one-shot: swap higher-level audio context AFTER the native Source
+ * registration function returns. The original source-capability allocations
+ * remain owned by the native daemon and are referenced by the new table.
+ * Only the obsolete 192-byte parent table is deliberately leaked. */
+static void btps_v83_attempt_post_source(uint64_t audio_context)
 {
     if (!g_v82_armed || !g_v81_shadow_returned || !g_v82_caps_ready ||
-        !g_orig[BTPS_H_REGISTER] || !g_v82_signal_hook_ok || !g_v82_sdp_hook_ok ||
-        !g_v82_tx_hook_ok ||
-        g_native_source_success != 6 ||
+        !g_v83_source_reg_hook_ok || !g_orig[BTPS_H_REGISTER] ||
+        !g_v82_signal_hook_ok || !g_v82_sdp_hook_ok || !g_v82_tx_hook_ok ||
+        !g_sdp_orig || g_native_source_success != 6 ||
         !__sync_bool_compare_and_swap(&g_v82_sink_attempted, 0, 1)) return;
-    uint64_t context = 0;
-    uint8_t slots = 0;
-    if (!btps_peek((uint64_t)(g_v78_base + 0x9768b0u), &context, sizeof context) ||
-        !context || !btps_peek(context + 0x60u, &slots, 1) || slots != 7u) {
-        BTPSLogNow("V82 SEP REFUSED: live table capacity is not verified seven");
-        return;
+    uint64_t avdtp_context = 0;
+    uint8_t avdtp_slots = 0;
+    if (!btps_peek((uint64_t)(g_v78_base + 0x9768b0u), &avdtp_context, sizeof avdtp_context) ||
+        !avdtp_context || !btps_peek(avdtp_context + 0x60u, &avdtp_slots, 1) ||
+        avdtp_slots != 7u) {
+        BTPSLogNow("V83 REFUSED: low-level AVDTP allocation is not 7 slots"); return;
     }
-    g_v82_caps.assigned_seid = 0;
-    BTPSLogNow("V82 SEP ATTEMPT: role=SNK type=1 codec=SBC slot7 only");
-    uint64_t ret = g_orig[BTPS_H_REGISTER](0, 1,
-        (uint64_t)(uintptr_t)&g_v82_caps.caps_words[0], 3, 1,
-        (uint64_t)(uintptr_t)&g_v82_caps.assigned_seid, 0, 0);
-    if (ret == 0 && g_v82_caps.assigned_seid != 0 &&
-        g_v82_caps.assigned_seid != 1 && g_v82_caps.assigned_seid != 2 &&
-        g_v82_caps.assigned_seid != 3 && g_v82_caps.assigned_seid != 4 &&
-        g_v82_caps.assigned_seid != 5 && g_v82_caps.assigned_seid != 6) {
-        g_v82_sink_accepted = 1;
-        BTPSSetStatus("diag.v82.sep", "LOCAL register=0 SEID=%u role=SNK; remote DISCOVER unverified",
-                      (unsigned)g_v82_caps.assigned_seid);
-    } else {
-        BTPSSetStatus("diag.v82.sep", "REFUSED ret=%#llx seid=%u", (unsigned long long)ret,
-                      (unsigned)g_v82_caps.assigned_seid);
+    if (!audio_context) {
+        BTPSLogNow("V83 REFUSED: audio context pointer is null"); return;
     }
-    BTPSLogNow("V82 SEP RESULT ret=%#llx seid=%u nativeSources=6; remote validation REQUIRED",
-               (unsigned long long)ret, (unsigned)g_v82_caps.assigned_seid);
+    struct {
+        uint32_t used;
+        uint32_t second;
+        uint64_t table;
+    } meta = {};
+    if (!btps_peek(audio_context + 0x68u, &meta, sizeof meta) ||
+        meta.used != 6u || meta.second != 6u || !meta.table) {
+        BTPSLogNow("V83 REFUSED: audio table metadata expected (6,6,nonzero) observed (%u,%u,%#llx)",
+            meta.used, meta.second, (unsigned long long)meta.table); return;
+    }
+    /* malloc_type_calloc(6,32,...) constructs the original table; the
+       allocator guarantees zero-initialized entries. calloc/free use the
+       same libSystem allocator family. The daemon's destructor calls free. */
+    uint8_t *new_table = (uint8_t *)calloc(7u, 32u);
+    uint8_t *new_caps = (uint8_t *)calloc(3u, 16u);
+    if (!new_table || !new_caps) {
+        BTPSLogNow("V83 REFUSED: calloc failed"); free(new_caps); free(new_table); return;
+    }
+    uint8_t *e7 = new_table + 6u * 32u;
+    uint64_t source_caps = 0;
+    uint64_t cap_context = 0;
+    uint32_t source_seid = 0;
+    if (!btps_peek(meta.table, new_table, 6u * 32u)) goto reject_before_swap;
+    memcpy(&source_seid, new_table + 4u, sizeof source_seid);
+    memcpy(&source_caps, new_table + 0x10u, sizeof source_caps);
+    if (source_seid != 1u || !source_caps || !btps_peek(source_caps, new_caps, 3u * 16u))
+        goto reject_before_swap;
+    /* Verify the known native Source codec-capability pointer refers to
+       the same audio context supplied to +0x3B4128. Distinguish these
+       audio-context capability records from AVDTP codec-byte records. */
+    memcpy(&cap_context, new_caps + 0x18u, sizeof cap_context);
+    if (new_caps[0] != 1u || new_caps[16] != 7u || new_caps[18] != 0u ||
+        new_caps[19] != 4u || new_caps[32] != 8u ||
+        cap_context != audio_context) goto reject_before_swap;
+    {
+        uint32_t seid = 7u, ncap = 3u;
+        uint64_t pcap = (uint64_t)(uintptr_t)new_caps;
+        memcpy(e7 + 0x04u, &seid, sizeof seid);
+        memcpy(e7 + 0x10u, &pcap, sizeof pcap);
+        e7[0x18u] = 1u; /* exact native initializer +0x3B3AA8 */
+        memcpy(e7 + 0x1cu, &ncap, sizeof ncap);
+    }
+    /* The live pointer and both count fields must be changed together,
+       after native Source registration completed, never before its loop. */
+    memcpy((void *)(uintptr_t)(audio_context + 0x78u), &new_table, sizeof new_table);
+    {
+        uint32_t seven = 7u;
+        memcpy((void *)(uintptr_t)(audio_context + 0x68u), &seven, sizeof seven);
+        memcpy((void *)(uintptr_t)(audio_context + 0x6cu), &seven, sizeof seven);
+    }
+    g_v83_leaked_original_table = (void *)(uintptr_t)meta.table;
+    g_v83_audio_extended = 1u;
+    BTPSSetStatus("diag.v83.audio_table", "REPLACED post native Source: entries=7, native=6, new_SEID=7; original parent block intentionally retained");
+    BTPSLogNow("V83 AUDIO_TABLE SWAPPED after native registration: count 6->7, old=%#llx retained, new=%p entry7_caps=%p",
+        (unsigned long long)meta.table, new_table, new_caps);
+    /* Use the SEID storage of the new high-level entry itself, exactly as
+       Apple's registration loop passes entry+4 as output. */
+    {
+        uint64_t ret = g_orig[BTPS_H_REGISTER](0, 1,
+            (uint64_t)(uintptr_t)&g_v82_caps.caps_words[0], 3, 1,
+            (uint64_t)(uintptr_t)(e7 + 4u), 0, 0);
+        uint32_t assigned_seid = 0;
+        memcpy(&assigned_seid, e7 + 4u, sizeof assigned_seid);
+        g_v82_caps.assigned_seid = (uint8_t)assigned_seid;
+        BTPSLogNow("V83 SEP RESULT ret=%#llx seid=%u type=SNK(1) audio_table=7; PEER validation required",
+            (unsigned long long)ret, assigned_seid);
+        if (ret != 0) {
+            /* The native routine did not register an endpoint. Restore the
+               previous pointer/counts and release only our two new blocks.
+               Original six children remain owned by Apple's original table. */
+            uint32_t six=6u;
+            void *old=(void *)(uintptr_t)meta.table;
+            memcpy((void *)(uintptr_t)(audio_context + 0x78u), &old, sizeof old);
+            memcpy((void *)(uintptr_t)(audio_context + 0x68u), &six, sizeof six);
+            memcpy((void *)(uintptr_t)(audio_context + 0x6cu), &six, sizeof six);
+            g_v83_audio_extended=0u;
+            g_v83_leaked_original_table=NULL;
+            free(new_caps);
+            free(new_table);
+            BTPSSetStatus("diag.v83.audio_table", "ROLLED BACK: Sink registration returned %#llx; 6 entries restored", (unsigned long long)ret);
+            return;
+        }
+        if (assigned_seid != 7u) {
+            BTPSSetStatus("diag.v83.audio_table", "UNSAFE TRIAL: assigned unexpected Sink SEID=%u; restart daemon, do not retry", assigned_seid);
+            return; /* successful SEP registration may retain entry pointers */
+        }
+        g_v82_sink_accepted = 1u;
+        BTPSSetStatus("diag.v82.sep", "LOCAL register=0 SEID=%u role=SNK with high-level audio entry; remote validation required", assigned_seid);
+    }
+    /* Source SDP was published inside the native loop before our post-hook.
+       Add the new Sink SDP here explicitly rather than relying on the old
+       Source-SDP hook timing. Uses the existing permanent SDP descriptor. */
+    if (__sync_bool_compare_and_swap(&g_v82_sdp_registered, 0u, 1u)) {
+        g_v82_sdp_handle = 0;
+        uint64_t ret = g_sdp_orig((uint64_t)(uintptr_t)BTPSV82SinkSDPDescriptor(),
+                                   (uint64_t)(uintptr_t)&g_v82_sdp_handle);
+        BTPSLogNow("V83 SDP add ret=%#llx handle=%#x class=0x110B; PEER SDP REQUIRED",
+            (unsigned long long)ret, (unsigned)g_v82_sdp_handle);
+        BTPSSetStatus("diag.sdp_sink_0x110b", "LOCAL add result=%#llx; peer SDP required", (unsigned long long)ret);
+        BTPSSetStatus("diag.v82.sdp", "LOCAL add=%#llx handle=%#x; remote SDP 0x110B must be queried",
+            (unsigned long long)ret, (unsigned)g_v82_sdp_handle);
+        if (ret != 0) BTPSSetStatus("diag.v83.audio_table", "SDP publish failed; restart daemon to recover");
+    }
+    return;
+reject_before_swap:
+    BTPSLogNow("V83 REFUSED: native Source table/caps/SEID/context layout did not match expected image");
+    BTPSSetStatus("diag.v83.audio_table", "REFUSED: Source table or capability validation failed");
+    free(new_caps);
+    free(new_table);
+}
+
+/* Function identity and exact four-word signature established from uploaded
+ * bluetoothd: +0x3B4128. It takes audio context as x0, returns w0 status.
+ * This observer calls the original once, and only then runs the experiment. */
+static uint64_t btps_v83_hook_native_registration(uint64_t audio_context)
+{
+    uint64_t ret = g_v83_source_reg_orig ? g_v83_source_reg_orig(audio_context) : 1u;
+    if (g_v82_armed) {
+        BTPSLogNow("V83 NATIVE_SOURCE_LOOP RETURN ret=%#llx observed_sources=%u; post-return boundary",
+                   (unsigned long long)ret, (unsigned)g_native_source_success);
+        if (ret == 0) btps_v83_attempt_post_source(audio_context);
+        else BTPSSetStatus("diag.v83.audio_table", "REFUSED: native Source loop returned error %#llx", (unsigned long long)ret);
+    }
+    return ret;
+}
+
+static void btps_v83_install_native_registration(uintptr_t base,int uuid_ok)
+{
+    if (!g_v82_armed || !uuid_ok) return;
+    if (!g_orig[BTPS_H_REGISTER] || !g_v82_signal_hook_ok ||
+        !g_v82_tx_hook_ok || !g_v82_sdp_hook_ok || !g_v80_enabled) {
+        BTPSSetStatus("diag.v83.audio_table", "REFUSED: required RX/TX/SDP/config hooks missing");return;
+    }
+    uintptr_t target=base+BTPS_V83_SOURCE_REG_ENTRY;
+    uint32_t words[4]={0};
+    if (!btps_peek(target,words,sizeof words) ||
+        memcmp(words,BTPS_V83_SOURCE_REG_SIG,sizeof words)!=0) {
+        BTPSSetStatus("diag.v83.audio_table", "REFUSED: registration-loop instruction signature mismatch");return;
+    }
+    void *trampoline=NULL;
+    MSHookFunction((void*)target,(void*)btps_v83_hook_native_registration,&trampoline);
+    if (!trampoline) {
+        BTPSSetStatus("diag.v83.audio_table", "FAILED: registration-loop hook returned no trampoline");return;
+    }
+    g_v83_source_reg_orig=(btps_v83_source_reg_fn_t)trampoline;
+    g_v83_source_reg_hook_ok=1u;
+    BTPSLogNow("V83 native Source loop hooked at image+0x3B4128; post-original one-shot table expansion only");
+    BTPSSetStatus("diag.v83.audio_table", "ARMED: post-Source-loop table expansion; no changes until original returns");
 }
 
 static uint64_t hook_register(uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3,
@@ -879,7 +1034,8 @@ static uint64_t hook_register(uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3
                     BTPSLogNow("V81_LIVE RESULT readable=%s live_slots=%u expected=7 sources=6; v8.2 gate follows",
                                readable ? "yes" : "no", (unsigned)live_count);
                 }
-                btps_v82_attempt_sink_once();
+                /* v8.3: never insert Sink inside the native Source loop.
+                   The optional post-return hook runs after all native Source setup. */
                 /* Did the optional getter probe reach the index-3 lookup before registration? */
                 if (g_v80_enabled && g_v80_index3_calls == 0u) {
                     BTPSSetStatus("diag.v80_config_lookup",
@@ -916,8 +1072,6 @@ static uint64_t hook_register(uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3
 static const uint32_t BTPS_SDP_RECORD_ADD_SIG[4] = {
     0xd503237fu, 0xa9bd57f6u, 0xa9014ff4u, 0xa9027bfdu
 };
-typedef uint64_t (*btps_sdp_fn_t)(uint64_t, uint64_t);
-static btps_sdp_fn_t g_sdp_orig = NULL;
 static volatile unsigned g_sdp_calls = 0;
 static volatile unsigned g_sdp_source_seen = 0;
 static volatile unsigned g_sdp_sink_seen = 0;
@@ -1048,7 +1202,8 @@ static uint64_t hook_sdp_add_record(uint64_t descriptor, uint64_t handle_out)
         BTPSLogNow("SDP_PROBE NOTE: local 0x110B class candidate added; Windows SDP visibility NOT verified");
     }
     if (ret == 0 && service_hint == 0x110a && g_v82_armed &&
-        g_v82_sink_accepted && !g_v82_sdp_registered && g_sdp_orig) {
+        g_v82_sink_accepted && g_v83_audio_extended &&
+        !g_v82_sdp_registered && g_sdp_orig) {
         if (__sync_bool_compare_and_swap(&g_v82_sdp_registered, 0u, 1u)) {
             const void *candidate = BTPSV82SinkSDPDescriptor();
             g_v82_sdp_handle = 0;
@@ -1208,6 +1363,7 @@ static void install_hooks(uintptr_t base, int uuid_ok)
     BTPSSetStatus("diag.v81_seven_slots", "OFF (default); no count overrides unless explicitly armed");
     BTPSSetStatus("diag.stage", "opt-in live A2DP sink signaling trial; PASS requires remote Sink media bytes");
     BTPSSetStatus("diag.v82.trial", "OFF pending one-shot arm");
+    BTPSSetStatus("diag.v83.audio_table", "OFF: no extra audio-context table by default");
     BTPSSetStatus("diag.v82.sep", "NOT attempted");
     BTPSSetStatus("diag.v82.sdp", "NOT published");
     BTPSSetStatus("diag.v82.rx", "NOT hooked");
@@ -1254,6 +1410,7 @@ static void install_hooks(uintptr_t base, int uuid_ok)
     btps_v82_install_rx((uintptr_t)mh, uuid_ok);
     btps_v82_install_tx((uintptr_t)mh, uuid_ok);
     install_optional_sdp_probe((uintptr_t)mh, uuid_ok);
+    btps_v83_install_native_registration((uintptr_t)mh, uuid_ok);
     /* Explicit user request only; no sockets or audio on Bluetooth callback threads. */
     if (uuid_ok && g_orig[BTPS_H_REGISTER] && g_orig[BTPS_H_ADVERTISE]) {
         BTPSDaemonProbeStart();

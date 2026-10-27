@@ -35,7 +35,7 @@ class V80ConfigGetterObserver(unittest.TestCase):
                         ctor.index('btps_v80_install_config_observer((uintptr_t)mh, uuid_ok)'))
         self.assertEqual(SRC.count('hook_fn[BTPS_H_REGISTER]'),1)
         self.assertIn('decisive_requested && g_v81_seven_armed && !BTPSExperimentsEnabled()',SRC)
-        self.assertIn('V82 SEP ATTEMPT: role=SNK',SRC)
+        self.assertIn('V83 SEP RESULT',SRC)
         self.assertIn('btps_v79_snapshot_geometry();',SRC)
         self.assertIn('if (g_v80_enabled && g_v80_index3_calls == 0u)',SRC)
     def test_docs_disclose_limitations(self):
