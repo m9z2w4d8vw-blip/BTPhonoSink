@@ -6,11 +6,12 @@ class DaemonProbeTests(unittest.TestCase):
     def test_the_daemon_probe_is_a_separate_file_not_a_bluetooth_callback(self):
         tweak=(ROOT/'Tweak.xm').read_text()
         self.assertIn('BTPSDaemonProbeStart();',tweak)
-        self.assertIn('"v7.6-sbc-playback"',tweak)
+        self.assertIn('"v7.7-sink-capacity-trial"',tweak)
         self.assertNotIn('socket(',tweak)
         self.assertNotIn('send(',tweak)
         self.assertNotIn('btps_ipc_encode_daemon_v74',tweak)
-        self.assertNotIn('BTPS_AVDTP_TSEP_SNK',tweak)
+        self.assertIn('BTPS_AVDTP_TSEP_SNK',tweak)
+        self.assertIn('g_v77_eligible',tweak)
     def test_socket_and_audio_only_in_notification_worker(self):
         probe=(ROOT/'BTPSDaemonProbe.c').read_text()
         for term in ['notify_register_dispatch','dispatch_queue_create','DISPATCH_QUEUE_SERIAL',

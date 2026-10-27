@@ -1,0 +1,6 @@
+BTPhonoSink v7.7 opt-in Sink SEP capacity trial
+
+Extract at the root of your current BTPhonoSink repository. Commit and push the changed files.
+Keep Legacy Sink OFF and v7.7 trial OFF for the first baseline test.
+Read TESTING-v7.7.md before enabling the separate high-risk trial.
+This build does not publish SDP 0x110B or receive Windows Bluetooth audio.

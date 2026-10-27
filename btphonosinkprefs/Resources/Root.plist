@@ -74,7 +74,7 @@
 			<key>label</key>
 			<string>Experiments</string>
 			<key>footerText</key>
-			<string>v7.4 preserves the passive v6 baseline: Sink injection is disabled regardless of this legacy switch. Leave it OFF. The app traces capability codecs, assigned SEIDs, private callback returns and timing, plus a session checklist. A2DP Sink SDP advertisement (0x110B) and incoming Bluetooth playback are NOT implemented.</string>
+			<string>Legacy Sink is disabled in all versions. The separate opt-in v7.7 trial below is a new one-shot capacity experiment; leave BOTH OFF during initial tests. Leave it OFF. The app traces capability codecs, assigned SEIDs, private callback returns and timing, plus a session checklist. A2DP Sink SDP advertisement (0x110B) and incoming Bluetooth playback are NOT implemented.</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -99,6 +99,18 @@
 			<key>label</key><string>Trace existing SDP records (advanced)</string>
 			<key>defaults</key><string>com.apple.bluetooth</string>
 			<key>key</key><string>BTPhonoSinkSDPProbe</string>
+			<key>default</key><false/>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSGroupCell</string>
+			<key>label</key><string>v7.7 Sink capacity experiment</string>
+			<key>footerText</key><string>HIGH RISK; OFF by default. Only after normal headphone testing: ON makes one additional private AVDTP Sink SEP registration attempt AFTER all six native Sources register successfully. A restart of bluetoothd is required. No Audio Sink SDP 0x110B is published and Windows cannot send audio yet. Possible Bluetooth instability: switch OFF and restart or restore v7.6.1.</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSSwitchCell</string>
+			<key>label</key><string>Trial extra Sink endpoint (advanced)</string>
+			<key>defaults</key><string>com.apple.bluetooth</string>
+			<key>key</key><string>BTPhonoSinkV77SinkTrial</string>
 			<key>default</key><false/>
 		</dict>
 	</array>

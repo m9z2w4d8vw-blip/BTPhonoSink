@@ -1,5 +1,5 @@
 /*
- * BTPhonoSink - v6 detailed passive diagnostics (observe only).
+ * BTPhonoSink - v7.7 passive baseline + explicitly opt-in Sink capacity experiment.
  *
  * Goal of the project: make the iPhone show up as a Bluetooth speaker (A2DP sink). Nobody knows yet whether the
  * daemon's stack can be taught that, so this build only WATCHES. Everything it sees is written to the debug log
@@ -45,7 +45,10 @@
  * v6: decode the observed codec at byte +2, trace return values and timings and include
  *      a session-specific export. SDP 0x110B and media receive remain NOT implemented.
  * v7: optional, OFF-BY-DEFAULT pass-through instrumentation for existing SDP record additions.
- *      This hook never adds, deletes or modifies an SDP record and does not allocate an AVDTP SEP.
+ * v7.7: one OFF-BY-DEFAULT experimental Sink endpoint registration AFTER all six
+ *       native Sources succeed, guarded by exact firmware UUID, verified hooks,
+ *       its own copied capability storage and one-byte SEID output. It does NOT
+ *       publish SDP 0x110B or enable a live Bluetooth media transport.
  */
 #include <CoreFoundation/CoreFoundation.h>
 #include <mach-o/dyld.h>
@@ -64,11 +67,13 @@
 #include "BTPSLog.h"
 #include "BTPSShared.h"
 #include "BTPSDaemonProbe.h"
+#include "BTPSV77Sink.h"
 
-#define BTPS_BUILD_TAG "v7.6-sbc-playback"
+#define BTPS_BUILD_TAG "v7.7-sink-capacity-trial"
 
 /* AVDTP constants, used for native Source registration diagnostics */
 #define BTPS_AVDTP_TSEP_SRC 0u
+#define BTPS_AVDTP_TSEP_SNK 1u
 #define BTPS_AVDTP_MEDIA_AUDIO 0u
 
 /* ------------------------------------------------------------------------------------------------ helpers */
@@ -246,6 +251,47 @@ BTPS_OBSERVER(hook_publish,       BTPS_H_PUBLISH)
  * an explicit trade-off that removes one Source endpoint.
  */
 static volatile unsigned g_native_source_success = 0;
+/* Optional one-shot Sink SEP capacity experiment. Unlike v4, this does not
+ * consume slots before Apple's six native Sources. Disabled by default;
+ * the OFF legacy flag is a hard prerequisite. This never publishes SDP. */
+static int g_v77_requested = 0;
+static int g_v77_eligible = 0;
+static volatile unsigned g_v77_attempted = 0;
+static BTPSV77SinkCaps g_v77_caps;
+static int g_v77_caps_ready = 0;
+
+static int btps_v77_bool_preference(CFStringRef name)
+{
+    CFPropertyListRef v = CFPreferencesCopyAppValue(name, CFSTR(BTPS_PREFS_DOMAIN));
+    int on = v && CFGetTypeID(v) == CFBooleanGetTypeID() && CFBooleanGetValue((CFBooleanRef)v);
+    if (v) CFRelease(v);
+    return on;
+}
+
+static void btps_v77_attempt_after_sources(void)
+{
+    if (!g_v77_eligible || !__sync_bool_compare_and_swap(&g_v77_attempted, 0u, 1u)) return;
+    if (!g_v77_caps_ready || !g_orig[BTPS_H_REGISTER] ||
+        g_native_source_success != 6u || BTPSExperimentsEnabled()) {
+        BTPSSetStatus("diag.v77_sink_trial", "REFUSED: SBC caps or safety conditions not met");
+        BTPSLogNow("V77_SINK refused: no stable SBC caps, hooks unavailable, or legacy flag on");
+        return;
+    }
+    /* Synchronous on Apple's existing AVDTP registration context, after the
+       SIXTH Source succeeds, never during previous source registrations.
+       By calling the original trampoline, we bypass our observer recursion. */
+    g_v77_caps.assigned_seid = 0u;
+    BTPSLogNow("V77_SINK ONE SHOT: attempting additional Sink after six accepted Sources; no SDP or media path");
+    const uint64_t ret = g_orig[BTPS_H_REGISTER](0u, BTPS_AVDTP_TSEP_SNK,
+        (uint64_t)(uintptr_t)g_v77_caps.caps_words, 3u, 1u,
+        (uint64_t)(uintptr_t)&g_v77_caps.assigned_seid, 0u, 0u);
+    BTPSSetStatus("diag.v77_sink_trial", "TRIED: private return=%#llx, SEID=%u, sources=6 (SDP NOT published)",
+                  (unsigned long long)ret, (unsigned)g_v77_caps.assigned_seid);
+    BTPSLogNow("V77_SINK RESULT raw_ret=%#llx private_SEID=%u native_sources=6 (0 may mean accepted; verify externally)",
+               (unsigned long long)ret, (unsigned)g_v77_caps.assigned_seid);
+    /* Do not advertise 0x110B, modify a Source record, or trigger playback. */
+}
+
 
 static uint64_t hook_register(uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3,
                               uint64_t a4, uint64_t a5, uint64_t a6, uint64_t a7)
@@ -270,6 +316,24 @@ static uint64_t hook_register(uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3
                         (unsigned long long)a2);
         } else {
             BTPSLog("v5: refusing to interpret unexpected numCaps=%u", ncap);
+        }
+    }
+
+    /* Capture one validated native SBC capability set into stable tweak-owned
+       memory. Read-only observation of Source data; no source modification. */
+    if (g_v77_eligible && !g_v77_caps_ready && (uint32_t)a0 == 0u &&
+        (uint32_t)a1 == BTPS_AVDTP_TSEP_SRC && (uint32_t)a3 == 3u) {
+        uint8_t raw[48];
+        if (btps_peek(a2, raw, sizeof raw) && raw[16] == 7u &&
+            raw[18] == 0u && raw[19] == 4u) {
+            uint64_t codec_ptr = 0;
+            memcpy(&codec_ptr, raw + 24u, sizeof codec_ptr);
+            uint8_t codec[4];
+            if (btps_peek(codec_ptr, codec, sizeof codec) &&
+                btps_v77_prepare_sink_caps(&g_v77_caps, raw, codec) == 0) {
+                g_v77_caps_ready = 1;
+                BTPSLogNow("V77_SINK captured stable SBC capability bytes from native Source (not registered yet)");
+            }
         }
     }
 
@@ -315,6 +379,7 @@ static uint64_t hook_register(uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3
             if (sources == 6u) {
                 BTPSLogNow("MILESTONE all six observed native Source endpoints registered; no Sink inserted");
                 BTPSSetStatus("diag.capacity", "six native Source registrations; free space unverified");
+                btps_v77_attempt_after_sources();
             }
         } else {
             BTPSLogNow("FAIL native Source registration #%u status %#llx (%s)",
@@ -611,12 +676,13 @@ static void install_hooks(uintptr_t base, int uuid_ok)
     BTPSSetStatus("build", "%s, %s %s", BTPS_BUILD_TAG, __DATE__, __TIME__);
     BTPSSetStatus("pid", "%d", (int)getpid());
     BTPSSetStatus("experiments", "off (v7 forced-passive, stored=%s)", BTPSExperimentsEnabled() ? "ON" : "off");
-    BTPSSetStatus("experiment.sink_register", "disabled - no additional registrations permitted");
+    BTPSSetStatus("experiment.sink_register", "legacy disabled; optional v7.7 trial separately gated OFF by default");
     BTPSSetStatus("diag.sdp_sink_0x110b", "no local Sink SDP publishing implemented; verify externally");
     BTPSSetStatus("diag.audio_receive", "NOT hooked - media transport/decoder wiring absent");
-    BTPSSetStatus("diag.stage", "observe native registration, advertising, configuration, SDP (optional) and publish callbacks");
+    BTPSSetStatus("diag.v77_sink_trial", "OFF (default), awaiting validated build gating");
+    BTPSSetStatus("diag.stage", "passive observation + optional one-shot Sink capacity trial; SDP/receive not implemented");
     BTPSSetStatus("diag.session_id", "%ld-%d", (long)time(NULL), (int)getpid());
-    BTPSLogNow("SESSION start pid=%d role=observe-only; no SDP/endpoint modifications", (int)getpid());
+    BTPSLogNow("SESSION start pid=%d baseline=pass-through; opt-in v7.7 single Sink capacity trial (OFF by default)", (int)getpid());
 
     char exe[512];
     uint32_t exe_size = sizeof exe;
@@ -646,7 +712,25 @@ static void install_hooks(uintptr_t base, int uuid_ok)
     BTPSSetStatus("image.uuid", "%s", have_s);
     BTPSSetStatus("image.expected", "%s", BTPS_BUILD_UUID);
 
+    g_v77_requested = btps_v77_bool_preference(CFSTR(BTPS_KEY_V77_SINK_TRIAL));
+    const int legacy_on = BTPSExperimentsEnabled();
+    if (!g_v77_requested) {
+        BTPSSetStatus("diag.v77_sink_trial", "OFF (default): no extra Sink endpoint registered");
+    } else if (!uuid_ok || legacy_on) {
+        BTPSSetStatus("diag.v77_sink_trial", "REFUSED: exact UUID required; Legacy Sink must be OFF");
+        BTPSLogNow("V77_SINK refused: UUID mismatch or Legacy Sink switch ON");
+    }
     install_hooks((uintptr_t)mh, uuid_ok);
+    /* All five baseline trampolines must be live; no failures tolerated. */
+    if (g_v77_requested && uuid_ok && !legacy_on) {
+        int all_five = 1;
+        for (int i = 0; i < BTPS_N_HOOKS; i++) if (!g_orig[i]) all_five = 0;
+        g_v77_eligible = all_five;
+        BTPSSetStatus("diag.v77_sink_trial", all_five ?
+           "ARMED: one optional Sink trial after SIX native Sources, no SDP" :
+           "REFUSED: fewer than five native hooks installed");
+        BTPSLogNow("V77_SINK %s", all_five ? "ARMED; waiting for six accepted Sources" : "REFUSED; hooks incomplete");
+    }
     install_optional_sdp_probe((uintptr_t)mh, uuid_ok);
     /* Explicit user request only; no sockets or audio on Bluetooth callback threads. */
     if (uuid_ok && g_orig[BTPS_H_REGISTER] && g_orig[BTPS_H_ADVERTISE]) {

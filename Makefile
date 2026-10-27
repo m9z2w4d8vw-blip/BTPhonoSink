@@ -17,7 +17,7 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = BTPhonoSink
 
-BTPhonoSink_FILES      = Tweak.xm BTPSLog.c BTPSCore.c BTPSDiagnostics.c BTPSIPCProtocol.c BTPSDaemonProbe.c BTPSV74Tone.c BTPSV75Fixture.c SBCSink.mm sbc_decode.c BTPSMedia.c
+BTPhonoSink_FILES      = Tweak.xm BTPSLog.c BTPSCore.c BTPSDiagnostics.c BTPSIPCProtocol.c BTPSDaemonProbe.c BTPSV74Tone.c BTPSV75Fixture.c BTPSV77Sink.c SBCSink.mm sbc_decode.c BTPSMedia.c
 BTPhonoSink_CFLAGS     = -fobjc-arc -fvisibility=hidden -fblocks
 BTPhonoSink_CCFLAGS    = -std=c++17 -fobjc-arc -fvisibility=hidden
 BTPhonoSink_FRAMEWORKS = AVFoundation AudioToolbox CoreAudio CoreFoundation Foundation

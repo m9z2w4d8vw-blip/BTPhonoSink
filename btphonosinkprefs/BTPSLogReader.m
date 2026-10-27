@@ -174,6 +174,7 @@ static NSArray<NSString *> *ReadFileLines(NSString *path, NSString **note)
         (unsigned long)hookCount,
         s.status[@"diag.native_source_ok"] ?: @"unknown"];
     [out appendFormat:@"Sink SDP 0x110B: %@\n", s.status[@"diag.sdp_sink_0x110b"] ?: @"not measured"];
+    [out appendFormat:@"v7.7 Sink capacity trial: %@\n", s.status[@"diag.v77_sink_trial"] ?: @"not measured"];
     [out appendFormat:@"Incoming audio path: %@\n", s.status[@"diag.audio_receive"] ?: @"not measured"];
     [out appendFormat:@"Configuration callback: %@ | SBC acceptance callback: %@\n",
         s.status[@"seen.SetConfigInd_handler"] ?: @"not seen in current captured status",

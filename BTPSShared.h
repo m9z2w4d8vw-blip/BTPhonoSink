@@ -16,6 +16,7 @@
 #define BTPS_PREFS_DOMAIN     "com.apple.bluetooth"
 #define BTPS_KEY_LOG          "BTPhonoSinkLog"           /* array of strings: the newest log lines            */
 #define BTPS_KEY_STATUS       "BTPhonoSinkStatus"        /* dictionary string -> string: self-test + hook state */
+#define BTPS_KEY_V77_SINK_TRIAL "BTPhonoSinkV77SinkTrial" /* OFF by default; one attempt after native Sources */
 #define BTPS_KEY_SDP_PROBE    "BTPhonoSinkSDPProbe"   /* OFF by default; optional read-only hook */
 #define BTPS_KEY_EXPERIMENTS  "BTPhonoSinkExperiments"   /* boolean, flipped by the switch in the Settings pane */
 

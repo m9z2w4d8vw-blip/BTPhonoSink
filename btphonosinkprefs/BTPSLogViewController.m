@@ -209,7 +209,13 @@
 - (void)showChecklist
 {
     NSString *log = [[BTPSLogReader shared] fullText];
-    BOOL correctBuild = [log containsString:@"build: v7.6-sbc-playback"];
+    BOOL correctBuild = [log containsString:@"build: v7.7-sink-capacity-trial"];
+    BOOL v77off = [log containsString:@"diag.v77_sink_trial: OFF"];
+    BOOL v77tried = [log containsString:@"diag.v77_sink_trial: TRIED"];
+    BOOL v77armed = [log containsString:@"diag.v77_sink_trial: ARMED"];
+    NSString *v77Result = v77off ? @"OFF (safe baseline)" :
+       (v77tried ? @"TRIED: see raw return and SEID in debug log" :
+       (v77armed ? @"ARMED: waiting for six Sources" : @"CHECK status in log"));
     BOOL hooks = [log containsString:@"hooks installed: 5 / 5"];
     BOOL sources = [log containsString:@"diag.native_source_ok: 6"];
     BOOL legacyOff = [log containsString:@"experiments: off (v7 forced-passive, stored=off)"];
@@ -219,11 +225,11 @@
     BOOL sbcArmed = [log containsString:@"diag.v75_sbc: ARMED"] || [log containsString:@"diag.v75_sbc: PASS"];
     BOOL sbc = [log containsString:@"seen.SetConfig_accept_SBC:"] && ![log containsString:@"seen.SetConfig_accept_SBC: 0 call(s)"];
     NSString *check = [NSString stringWithFormat:
-       @"%@ v7.6 is running\n%@ Five original hooks installed\n%@ Six original Source endpoints\n%@ Legacy experiment is OFF\n%@ Optional SDP observer installed\n%@ Audio Source SDP record observed\n%@ SBC negotiation callback seen\n%@ Daemon-to-helper test is ARMED or PASS\n%@ Compressed SBC transport is ARMED or PASS\n\nMANUAL: Confirm headphones play after reconnecting.\nMANUAL: Export and send the log using Save Log to iCloud Drive.\nMANUAL v7.4: Start helper with --daemon in SSH, then tap Send PCM from bluetoothd and enter its token. Check SSH and diag.v74_ipc; confirm 880 Hz audibility.\nMANUAL v7.6: start helper with --sbc-play then tap Send Compressed SBC; expect SBC_DECODE_PASS, AUDIO_FINISHED, and a 440 Hz tone.  --sbc still performs the silent integrity test.\n\nThe Settings local tone and the new v7.6 decoded SBC playback are different tests. V7.3 sends 660 Hz PCM from Settings; V7.4 sends 880 Hz PCM from bluetoothd. None receive live Bluetooth audio from Windows.",
+       @"%@ v7.7 is running\n%@ Five original hooks installed\n%@ Six original Source endpoints\n%@ Legacy experiment is OFF\n%@ Optional SDP observer installed\n%@ Audio Source SDP record observed\n%@ SBC negotiation callback seen\n%@ Daemon-to-helper test is ARMED or PASS\n%@ Compressed SBC transport is ARMED or PASS\n\nV7.7 Sink trial: %@ (separate from Legacy Sink). No SDP or live Bluetooth audio.\nMANUAL: Confirm headphones play after reconnecting.\nMANUAL: Export and send the log using Save Log to iCloud Drive.\nMANUAL v7.4: Start helper with --daemon in SSH, then tap Send PCM from bluetoothd and enter its token. Check SSH and diag.v74_ipc; confirm 880 Hz audibility.\nMANUAL v7.6: start helper with --sbc-play then tap Send Compressed SBC; expect SBC_DECODE_PASS, AUDIO_FINISHED, and a 440 Hz tone.  --sbc still performs the silent integrity test.\n\nThe Settings local tone and the new v7.6 decoded SBC playback are different tests. V7.3 sends 660 Hz PCM from Settings; V7.4 sends 880 Hz PCM from bluetoothd. None receive live Bluetooth audio from Windows.",
        correctBuild ? @"PASS" : @"CHECK", hooks ? @"PASS" : @"CHECK",
        sources ? @"PASS" : @"CHECK", legacyOff ? @"PASS" : @"CHECK",
        probe ? @"PASS" : @"NOT ENABLED", sdpsource ? @"PASS" : @"NOT SEEN",
-       sbc ? @"PASS" : @"NOT YET SEEN", daemonArmed ? @"PASS" : @"NOT ARMED",sbcArmed?@"PASS":@"NOT ARMED"];
+       sbc ? @"PASS" : @"NOT YET SEEN", daemonArmed ? @"PASS" : @"NOT ARMED",sbcArmed?@"PASS":@"NOT ARMED",v77Result];
     [self showMessage:check title:@"BTPhonoSink test checklist"];
 }
 
