@@ -23,3 +23,14 @@ If validation fails: capture `SBC_REJECT` or the daemon's exact `diag.v75_sbc` s
 ## What constitutes a pass
 
 A verified compressed transfer means the synthetic *encoded* packets passed from the running Bluetooth daemon to the separate helper without corruption. It does **not** prove the real Bluetooth radio/AVDTP receiving path; separate Sink registration and incoming L2CAP media hooks are still required. The existing custom SBC decoder remains excluded until an audio fidelity regression test passes.
+
+
+## v7.5 linker hotfix (October 26, 2026)
+
+The initial v7.5 build failed at final linking (both arm64 and arm64e):
+`Undefined symbols ... BTPSDaemonProbeStartV75()`. The C entry point was
+declared outside the `extern "C"` guard in `BTPSDaemonProbe.h` and thus
+Objective-C++ expected a C++ symbol. This package moves the declaration
+inside the existing guard; no Bluetooth hooks or audio packets were changed.
+A native C-to-C++ linkage test now runs in GitHub Actions before packaging.
+The Theos iOS linker build still requires verification on GitHub Actions.

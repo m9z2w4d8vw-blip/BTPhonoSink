@@ -27,3 +27,12 @@ Run `python3 -m unittest discover -s tests -v`. The regression suite includes na
 GitHub Actions runs these tests, builds a rootless `arm64e`-capable package, checks for the helper executable and publishes the `.deb` to the `nightly` release after a push to `main`.
 
 For architecture and earlier testing details, see `docs/`, `TESTING-v7.4.md`, `TESTING-v7.3.md`, `TESTING-v7.2.md`, `TESTING-v7.1.md`.
+
+
+### v7.5 linker correction
+
+The first v7.5 upload had an arm64/arm64e undefined symbol for
+`BTPSDaemonProbeStartV75()`. The fixed `BTPSDaemonProbe.h` declares both
+entry points with C linkage, and a native C/C++ linker regression is now
+run in CI before Theos compilation. This is a build-only fix and does
+not enable Sink registration.
