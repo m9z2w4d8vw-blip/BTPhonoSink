@@ -1,5 +1,5 @@
 /*
- * BTPhonoSink - v8.1 one-shot initializer capacity experiment (OFF by default).
+ * BTPhonoSink - v8.2 one-shot native A2DP Sink signaling experiment (OFF by default).
  *
  * Goal of the project: make the iPhone show up as a Bluetooth speaker (A2DP sink). Nobody knows yet whether the
  * daemon's stack can be taught that, so the default build only WATCHES; an explicitly armed ONE-SHOT
@@ -70,11 +70,14 @@
 #include "BTPSV78Capacity.h"
 #include "BTPSV79Geometry.h"
 #include "BTPSV81Config.h"
+#include "BTPSV77Sink.h"
+#include "BTPSV82SDP.h"
 
-#define BTPS_BUILD_TAG "v8.1-one-shot-seven-slot"
+#define BTPS_BUILD_TAG "v8.2-native-sink-signaling-probe"
 
 /* AVDTP constants, used for native Source registration diagnostics */
 #define BTPS_AVDTP_TSEP_SRC 0u
+#define BTPS_AVDTP_TSEP_SNK 1u
 #define BTPS_AVDTP_MEDIA_AUDIO 0u
 
 /* ------------------------------------------------------------------------------------------------ helpers */
@@ -252,6 +255,19 @@ BTPS_OBSERVER(hook_publish,       BTPS_H_PUBLISH)
  * an explicit trade-off that removes one Source endpoint.
  */
 static volatile unsigned g_native_source_success = 0;
+/* Trial requires BOTH separate one-shot preferences. Never retry automatically. */
+static int g_v82_armed = 0;
+static volatile unsigned g_v82_sink_attempted = 0;
+static BTPSV77SinkCaps g_v82_caps;
+static volatile unsigned g_v82_caps_ready = 0;
+static volatile unsigned g_v82_sink_accepted = 0;
+static volatile uint32_t g_v82_sdp_handle = 0;
+static volatile unsigned g_v82_sdp_registered = 0;
+static btps_fn_t g_v82_sig_orig = NULL;
+static volatile unsigned g_v82_sig_calls = 0;
+static volatile unsigned g_v82_signal_hook_ok = 0;
+static volatile unsigned g_v82_sdp_hook_ok = 0;
+
 /* Optional one-shot Sink SEP capacity experiment. Unlike v4, this does not
  * consume slots before Apple's six native Sources. Disabled by default;
  * the OFF legacy flag is a hard prerequisite. This never publishes SDP. */
@@ -438,6 +454,26 @@ static volatile unsigned g_v81_shadow_returned = 0;
 static uint8_t g_v81_shadow[BTPS_V81_CONFIG_COPY_BYTES] __attribute__((aligned(16)));
 static int g_v80_enabled_for_v79_audit(void) { return g_v80_enabled; }
 
+/* Consumed before installing ANY private hook. Missing seven-slot arm fails closed. */
+static int btps_v82_consume_trial_arm(void)
+{
+    CFPropertyListRef v = CFPreferencesCopyAppValue(CFSTR("BTPhonoSinkV82DecisiveOnce"),
+                                                   CFSTR(BTPS_PREFS_DOMAIN));
+    int requested = v && CFGetTypeID(v) == CFBooleanGetTypeID() &&
+                    CFBooleanGetValue((CFBooleanRef)v);
+    if (v) CFRelease(v);
+    if (!requested) return 0;
+    CFPreferencesSetAppValue(CFSTR("BTPhonoSinkV82DecisiveOnce"), kCFBooleanFalse,
+                             CFSTR(BTPS_PREFS_DOMAIN));
+    Boolean saved = CFPreferencesAppSynchronize(CFSTR(BTPS_PREFS_DOMAIN));
+    v = CFPreferencesCopyAppValue(CFSTR("BTPhonoSinkV82DecisiveOnce"), CFSTR(BTPS_PREFS_DOMAIN));
+    int clear = v && CFGetTypeID(v) == CFBooleanGetTypeID() && !CFBooleanGetValue((CFBooleanRef)v);
+    if (v) CFRelease(v);
+    BTPSSetStatus("diag.v82.arm", saved && clear ? "one-shot CONSUMED" : "REFUSED: cannot verify disarm");
+    return saved && clear;
+}
+
+
 /* A request is CONSUMED before the hook can run. Do not retry automatically
  * on daemon relaunch; fail closed if the preference cannot be cleared. */
 static int btps_v81_consume_one_shot(void)
@@ -530,6 +566,12 @@ static void btps_v80_install_config_observer(uintptr_t base, int uuid_ok)
 {
     /* Disarm the one-shot setting even if later gates refuse installation. */
     g_v81_seven_armed = btps_v81_consume_one_shot();
+    int decisive_requested = btps_v82_consume_trial_arm();
+    g_v82_armed = decisive_requested && g_v81_seven_armed && !BTPSExperimentsEnabled();
+    BTPSSetStatus("diag.v82.trial", g_v82_armed ?
+        "ARMED: one-shot seven slots + one Sink SEP + local SDP candidate + signaling RX" :
+        (decisive_requested ? "REFUSED: seven-slot arm absent or legacy ON" : "OFF (default)"));
+    if (decisive_requested && !g_v82_armed) BTPSLogNow("V82 REFUSED: both independent one-shot arms required; legacy OFF");
     if (!btps_v80_requested() && !g_v81_seven_armed) {
         BTPSSetStatus("diag.v80_config_lookup", "OFF (default), no extra hook");
         BTPSLogNow("V80_CFG_GET observer OFF; no config getter hook installed");
@@ -568,6 +610,88 @@ static void btps_v80_install_config_observer(uintptr_t base, int uuid_ok)
     BTPSLogNow("V80_CFG_GET installed at image+0x1f5f20; one-shot seven=%s; otherwise original return unchanged", g_v81_seven_armed ? "ARMED" : "OFF");
 }
 
+/* Verified exact-image AVDTP RX signaling dispatcher; CID, packet ptr, length.
+ * These logs are inbound SIGNALING, not RTP media or TX response receipts. */
+#define BTPS_V82_RX_DISPATCH 0x000d3b08ul
+static const uint32_t BTPS_V82_RX_SIG[4] = {0xd503237fu,0xd10203ffu,0xa90557f6u,0xa9064ff4u};
+static uint64_t btps_v82_receive_signal(uint64_t cid, uint64_t ptr, uint64_t length,
+                                       uint64_t a3,uint64_t a4,uint64_t a5,uint64_t a6,uint64_t a7)
+{
+    uint32_t n = __sync_add_and_fetch(&g_v82_sig_calls, 1);
+    if (length >= 2u && length <= 1024u) {
+        uint8_t h[2];
+        if (btps_peek(ptr, h, 2)) {
+            unsigned tx=(h[0]>>4)&15u, packet=(h[0]>>2)&3u, msg=h[0]&3u;
+            unsigned id=h[1]&63u;
+            if (n < 2000u) {
+                BTPSLogNow("V82 RX_SIGNAL #%u CID=%#llx tx=%u pkt=%u msg=%u sig=%u len=%llu",
+                    n,(unsigned long long)cid,tx,packet,msg,id,(unsigned long long)length);
+                uint8_t bytes[32];
+                for (uint64_t off=0; off<length; off+=sizeof bytes) {
+                    size_t take = (size_t)(length-off < sizeof bytes ? length-off : sizeof bytes);
+                    if (!btps_peek(ptr+off,bytes,take)) {
+                        BTPSLogNow("V82 RX_SIGNAL #%u read-failed at +%llu",n,(unsigned long long)off);break;
+                    }
+                    char hex[sizeof bytes*3+1]; size_t p=0;
+                    for (size_t i=0;i<take;i++) p+=(size_t)snprintf(hex+p,sizeof hex-p,"%02x%s",bytes[i],i+1==take?"":" ");
+                    BTPSLog("V82 RX_RAW #%u +%llu %s", n,(unsigned long long)off,hex);
+                }
+            }
+        }
+    } else if (n < 2000u) BTPSLogNow("V82 RX_SIGNAL #%u unexpected length=%llu",n,(unsigned long long)length);
+    return g_v82_sig_orig ? g_v82_sig_orig(cid,ptr,length,a3,a4,a5,a6,a7) : 0;
+}
+static void btps_v82_install_rx(uintptr_t base,int uuid_ok)
+{
+    if (!g_v82_armed || !uuid_ok) return;
+    uintptr_t target=base+BTPS_V82_RX_DISPATCH; uint32_t words[4]={0};
+    if (!btps_peek(target,words,sizeof words) || memcmp(words,BTPS_V82_RX_SIG,sizeof words)!=0) {
+        BTPSSetStatus("diag.v82.rx","REFUSED: exact dispatcher signature mismatch");return;
+    }
+    void *trampoline=NULL;
+    MSHookFunction((void*)target,(void*)btps_v82_receive_signal,&trampoline);
+    if (!trampoline) { BTPSSetStatus("diag.v82.rx","FAILED: no trampoline");return; }
+    g_v82_sig_orig=(btps_fn_t)trampoline;
+    g_v82_signal_hook_ok=1;
+    BTPSSetStatus("diag.v82.rx","installed, incoming AVDTP SIGNALING only; no TX/media hook");
+    BTPSLogNow("V82 RX dispatcher hooked at image+0xD3B08; incoming signaling only");
+}
+
+/* AVDTP V8.2 trial: exact six native Source endpoints must succeed first.
+ * The copied SBC codec buffer and its SEID output byte have process lifetime. */
+static void btps_v82_attempt_sink_once(void)
+{
+    if (!g_v82_armed || !g_v81_shadow_returned || !g_v82_caps_ready ||
+        !g_orig[BTPS_H_REGISTER] || !g_v82_signal_hook_ok || !g_v82_sdp_hook_ok ||
+        g_native_source_success != 6 ||
+        !__sync_bool_compare_and_swap(&g_v82_sink_attempted, 0, 1)) return;
+    uint64_t context = 0;
+    uint8_t slots = 0;
+    if (!btps_peek((uint64_t)(g_v78_base + 0x9768b0u), &context, sizeof context) ||
+        !context || !btps_peek(context + 0x60u, &slots, 1) || slots != 7u) {
+        BTPSLogNow("V82 SEP REFUSED: live table capacity is not verified seven");
+        return;
+    }
+    g_v82_caps.assigned_seid = 0;
+    BTPSLogNow("V82 SEP ATTEMPT: role=SNK type=1 codec=SBC slot7 only");
+    uint64_t ret = g_orig[BTPS_H_REGISTER](0, 1,
+        (uint64_t)(uintptr_t)&g_v82_caps.caps_words[0], 3, 1,
+        (uint64_t)(uintptr_t)&g_v82_caps.assigned_seid, 0, 0);
+    if (ret == 0 && g_v82_caps.assigned_seid != 0 &&
+        g_v82_caps.assigned_seid != 1 && g_v82_caps.assigned_seid != 2 &&
+        g_v82_caps.assigned_seid != 3 && g_v82_caps.assigned_seid != 4 &&
+        g_v82_caps.assigned_seid != 5 && g_v82_caps.assigned_seid != 6) {
+        g_v82_sink_accepted = 1;
+        BTPSSetStatus("diag.v82.sep", "LOCAL register=0 SEID=%u role=SNK; remote DISCOVER unverified",
+                      (unsigned)g_v82_caps.assigned_seid);
+    } else {
+        BTPSSetStatus("diag.v82.sep", "REFUSED ret=%#llx seid=%u", (unsigned long long)ret,
+                      (unsigned)g_v82_caps.assigned_seid);
+    }
+    BTPSLogNow("V82 SEP RESULT ret=%#llx seid=%u nativeSources=6; remote validation REQUIRED",
+               (unsigned long long)ret, (unsigned)g_v82_caps.assigned_seid);
+}
+
 static uint64_t hook_register(uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3,
                               uint64_t a4, uint64_t a5, uint64_t a6, uint64_t a7)
 {
@@ -597,6 +721,22 @@ static uint64_t hook_register(uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3
     /* Capture one validated native SBC capability set into stable tweak-owned
        memory. Read-only observation of Source data; no source modification. */
     /* No capability mirroring: the v7.7 trial is retired. */
+
+    /* Copy only the SBC Source capability bytes; never mutate Apple's memory.
+       This is deliberately NOT an audio Sink success claim. */
+    if (g_v82_armed && !g_v82_caps_ready && (uint32_t)a0 == 0 &&
+        (uint32_t)a1 == 0 && (uint32_t)a3 == 3) {
+        uint8_t raw[48], codec[4]; uint64_t ptr = 0;
+        if (btps_peek(a2, raw, sizeof raw) && raw[16] == 7 &&
+            raw[18] == 0 && raw[19] == 4) {
+            memcpy(&ptr, raw + 24, sizeof ptr);
+            if (btps_peek(ptr, codec, sizeof codec) &&
+                btps_v77_prepare_sink_caps(&g_v82_caps, raw, codec) == 0) {
+                g_v82_caps_ready = 1;
+                BTPSLogNow("V82 SEP caps: stable private copy of 3 native SBC capabilities ready");
+            }
+        }
+    }
 
     /* Always forward all arguments untouched. */
     const uint64_t started = mach_absolute_time();
@@ -650,11 +790,12 @@ static uint64_t hook_register(uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3
                     int readable = btps_peek((uint64_t)(g_v78_base + 0x9768b0u), &context, sizeof context) &&
                                    btps_peek(context + 0x60u, &live_count, sizeof live_count);
                     BTPSSetStatus("diag.v81_seven_slots",
-                                  "ONE SHOT result: live_slots=%s%u expected=7 native_sources=6; no Sink registered",
+                                  "ONE SHOT result: live_slots=%s%u expected=7 native_sources=6; v8.2 may separately attempt Sink",
                                   readable ? "" : "unreadable/", (unsigned)live_count);
-                    BTPSLogNow("V81_LIVE RESULT readable=%s live_slots=%u expected=7 sources=6; no Sink added",
+                    BTPSLogNow("V81_LIVE RESULT readable=%s live_slots=%u expected=7 sources=6; v8.2 gate follows",
                                readable ? "yes" : "no", (unsigned)live_count);
                 }
+                btps_v82_attempt_sink_once();
                 /* Did the optional getter probe reach the index-3 lookup before registration? */
                 if (g_v80_enabled && g_v80_index3_calls == 0u) {
                     BTPSSetStatus("diag.v80_config_lookup",
@@ -822,6 +963,20 @@ static uint64_t hook_sdp_add_record(uint64_t descriptor, uint64_t handle_out)
         BTPSSetStatus("diag.sdp_sink_candidate_seen", "local 0x110B record-add observed (%u); remote unverified", seen);
         BTPSLogNow("SDP_PROBE NOTE: local 0x110B class candidate added; Windows SDP visibility NOT verified");
     }
+    if (ret == 0 && service_hint == 0x110a && g_v82_armed &&
+        g_v82_sink_accepted && !g_v82_sdp_registered && g_sdp_orig) {
+        if (__sync_bool_compare_and_swap(&g_v82_sdp_registered, 0u, 1u)) {
+            const void *candidate = BTPSV82SinkSDPDescriptor();
+            g_v82_sdp_handle = 0;
+            uint64_t add = g_sdp_orig((uint64_t)(uintptr_t)candidate,
+                                      (uint64_t)(uintptr_t)&g_v82_sdp_handle);
+            BTPSSetStatus("diag.sdp_sink_0x110b", "LOCAL add result=%#llx; remote 0x110B NOT VERIFIED", (unsigned long long)add);
+            BTPSSetStatus("diag.v82.sdp", "LOCAL add=%#llx handle=%#x; remote SDP 0x110B NOT VERIFIED",
+                          (unsigned long long)add, (unsigned)g_v82_sdp_handle);
+            BTPSLogNow("V82 SDP add ret=%#llx handle=%#x class=0x110B; PEER SDP REQUIRED",
+                       (unsigned long long)add, (unsigned)g_v82_sdp_handle);
+        }
+    }
     if (sample) {
         int after_readable = handle_out && btps_peek(handle_out, &handle_after, sizeof handle_after);
         BTPSLog("SDP_PROBE #%u exit ret=%#llx out_handle=%s before=0x%08x after=0x%08x",
@@ -835,7 +990,7 @@ static uint64_t hook_sdp_add_record(uint64_t descriptor, uint64_t handle_out)
 
 static void install_optional_sdp_probe(uintptr_t base, int uuid_ok)
 {
-    if (!btps_sdp_probe_requested()) {
+    if (!btps_sdp_probe_requested() && !g_v82_armed) {
         BTPSSetStatus("diag.sdp_probe", "OFF (default); no SDP hook installed");
         BTPSLogNow("SDP_PROBE disabled by default; enable separately in Settings, then restart bluetoothd once");
         return;
@@ -857,7 +1012,7 @@ static void install_optional_sdp_probe(uintptr_t base, int uuid_ok)
         return;
     }
     void *orig = NULL;
-    BTPSLogNow("SDP_PROBE installing OPTIONAL observer at image+0x1e8e78 (pass-through only)");
+    BTPSLogNow("SDP_PROBE installing at image+0x1e8e78 (PASS-THROUGH unless v8.2 one-shot Sink registration succeeds)");
     MSHookFunction((void *)entry, (void *)hook_sdp_add_record, &orig);
     if (!orig) {
         BTPSSetStatus("diag.sdp_probe", "FAILED to install; restart with toggle OFF");
@@ -865,8 +1020,9 @@ static void install_optional_sdp_probe(uintptr_t base, int uuid_ok)
         return;
     }
     g_sdp_orig = (btps_sdp_fn_t)orig;
-    BTPSSetStatus("diag.sdp_probe", "installed (optional 6th hook, non-mutating)");
-    BTPSLogNow("SDP_PROBE optional observer installed; SDP records/SEPs will NOT be added");
+    g_v82_sdp_hook_ok = 1;
+    BTPSSetStatus("diag.sdp_probe", "installed; one-shot v8.2 may add separate Sink record");
+    BTPSLogNow("SDP_PROBE installed; only v8.2 armed trial after accepted Sink SEP may add 0x110B");
 }
 
 /* ------------------------------------------------------------------------------------------------ installing */
@@ -958,15 +1114,21 @@ static void install_hooks(uintptr_t base, int uuid_ok)
     BTPSSetStatus("build", "%s, %s %s", BTPS_BUILD_TAG, __DATE__, __TIME__);
     BTPSSetStatus("pid", "%d", (int)getpid());
     BTPSSetStatus("experiments", "off (v7 forced-passive, stored=%s)", BTPSExperimentsEnabled() ? "ON" : "off");
-    BTPSSetStatus("experiment.sink_register", "v8.1: ALL Sink registration experiments disabled");
-    BTPSSetStatus("diag.sdp_sink_0x110b", "no local Sink SDP publishing implemented; verify externally");
+    BTPSSetStatus("experiment.sink_register", "v8.2: OFF by default; separate one-shot Sink trial only with seven-slot arm");
+    BTPSSetStatus("diag.sdp_sink_0x110b", "not verified; optional trial may add local 0x110B candidate");
     BTPSSetStatus("diag.audio_receive", "NOT hooked - media transport/decoder wiring absent");
     BTPSSetStatus("diag.v77_sink_trial", "DISABLED permanently in v7.8 after return 0x68");
     BTPSSetStatus("diag.v78_table", "PENDING: read-only table scan after six normal Sources");
     BTPSSetStatus("diag.v79_allocator", "PENDING: allocation geometry after six normal Sources");
     BTPSSetStatus("diag.v80_config_lookup", "PENDING: optional observer not installed yet");
     BTPSSetStatus("diag.v81_seven_slots", "OFF (default); no count overrides unless explicitly armed");
-    BTPSSetStatus("diag.stage", "one-shot seven-slot config shadow (OFF by default); no Sink, SDP or live receive");
+    BTPSSetStatus("diag.stage", "opt-in live A2DP sink signaling trial; PASS requires remote Sink media bytes");
+    BTPSSetStatus("diag.v82.trial", "OFF pending one-shot arm");
+    BTPSSetStatus("diag.v82.sep", "NOT attempted");
+    BTPSSetStatus("diag.v82.sdp", "NOT published");
+    BTPSSetStatus("diag.v82.rx", "NOT hooked");
+    BTPSSetStatus("diag.v82.media", "UNOBSERVED: media callback not hooked; no PASS possible in this build");
+    BTPSSetStatus("diag.v82.tx", "UNOBSERVED: outbound ACCEPT/REJECT responses not hooked");
     BTPSSetStatus("diag.session_id", "%ld-%d", (long)time(NULL), (int)getpid());
     BTPSLogNow("SESSION start pid=%d optional one-shot 7-slot initializer config, OFF by default; no Sink registration", (int)getpid());
 
@@ -1005,6 +1167,7 @@ static void install_hooks(uintptr_t base, int uuid_ok)
     g_v78_base = (uintptr_t)mh;
     install_hooks((uintptr_t)mh, uuid_ok);
     btps_v80_install_config_observer((uintptr_t)mh, uuid_ok);
+    btps_v82_install_rx((uintptr_t)mh, uuid_ok);
     install_optional_sdp_probe((uintptr_t)mh, uuid_ok);
     /* Explicit user request only; no sockets or audio on Bluetooth callback threads. */
     if (uuid_ok && g_orig[BTPS_H_REGISTER] && g_orig[BTPS_H_ADVERTISE]) {

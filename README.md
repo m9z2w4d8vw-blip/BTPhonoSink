@@ -1,37 +1,7 @@
-# BTPhonoSink v8.1 — One-shot seven-slot allocation experiment
+# BTPhonoSink v8.2 — opt-in native A2DP Sink signaling research
 
-**New in v8.1:** Optional one-restart initializer-time config shadow returns `(7,3,3)` instead of `(6,3,3)` to Apple's existing allocator; separate read-only observer still works. This is **NOT** an A2DP Sink. No endpoint added, no SDP 0x110B, no Bluetooth audio receive. **Default OFF.** Automatic disarm must succeed before attempting override. Treat as high risk to Bluetooth availability and keep v8.0 available for rollback. See `TESTING-v8.1.md`.
+This source incorporates the prior v8.1 verified 7-slot initialization shadow and adds one gated **real Sink-role (TSEP=1) SEP registration**, a separate long-lived local `0x110B` SDP record, and raw RX logging of native AVDTP **signaling**. Both independent one-shot switches must be explicitly armed; default behavior preserves the previous passive hooks. Rootless tweak targets the *exact* supplied iOS 17.0 `bluetoothd` SHA-256 and LC_UUID.
 
-# BTPhonoSink v8.0 — optional read-only config lookup timing observation
+**No claim of functionality:** RX commands do not prove TX acceptance, SEP state transitions, or arrival of media bytes. The final native-Sink feasibility verdict remains **INCONCLUSIVE** without a remote negotiation and media-channel evidence. A successful `.deb` build also provides no evidence of live Bluetooth functionality.
 
-**No Bluetooth Sink has been implemented.** v7.9 verified that the three allocation
-counts match `(6,3,3)` at runtime. The next question is whether our injected tweak
-can see the configuration getter call for index 3 **before** native endpoints are
-registered. This build provides one additional, OFF-by-default pass-through hook
-at the exact build-verified getter entry `bluetoothd+0x1f5f20`.
-
-This observer logs the getter's unchanged result and the three existing count bytes.
-It does not expand the table, modify memory, change SDP, or receive Bluetooth media.
-The existing five working hooks and read-only v7.8/v7.9 diagnostics remain unchanged.
-
-See `TESTING-v8.0.md` for instructions. Keep both legacy Sink and SDP tracing OFF.
-
-# BTPhonoSink v8.0 — read-only Bluetooth endpoint allocation research
-
-The iPhone's AVDTP stack currently registers six native A2DP Source endpoints and the v7.7
-seventh Sink trial returned `0x68`. v7.8 verified **6/6 occupied endpoint slots**.
-
-The exact device's `bluetoothd` binary additionally shows that initialization reads
-**configuration block 3** and allocates three arrays sized **config[0]×40**,
-**config[1]×144**, and **config[2]×64** bytes. The first requested size is the endpoint
-array. v8.0 reads the original three configuration bytes and the corresponding live state,
-without changing anything, so we can establish how the endpoint capacity is provisioned.
-
-**There is NO slot expansion, Sink registration, SDP 0x110B publication or live Bluetooth
-reception in v8.0.** Legacy Sink remains disabled. All five passive hooks, the optional
-read-only SDP observer (OFF by default), original headphones behavior, iCloud export, and
-previous manually triggered IPC/SBC helper playback tests are preserved.
-
-- [v8.0 testing instructions](TESTING-v8.0.md)
-- [Disassembly-based allocation research](docs/V79_AVDTP_ALLOCATION_FINDINGS.md)
-- [v7.8 endpoint search and error 0x68](docs/V78_AVDTP_CAPACITY_FINDINGS.md)
+Read `TESTING-v8.2.md` and `PROVENANCE-v8.2.md` before attempting a trial. Preserve your known working v8.1 package and recovery access. The underlying Apple private API is not supported and can destabilize Bluetooth.

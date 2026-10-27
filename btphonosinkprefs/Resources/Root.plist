@@ -146,6 +146,18 @@
 			<key>default</key>
 			<false/>
 		</dict>
+		<dict>
+			<key>cell</key><string>PSGroupCell</string>
+			<key>label</key><string>v8.2 decisive signaling experiment</string>
+			<key>footerText</key><string>DANGEROUS one-restart private-stack test. Requires BOTH this switch and seven-slot one-shot ON before restart. Only local SEP/SDP and inbound signaling capture attempted; MEDIA reception not implemented and cannot PASS. Normal headphones may fail. Log may contain Bluetooth addresses and protocol payloads. Revert to v8.1 on instability.</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSSwitchCell</string>
+			<key>label</key><string>Arm real Sink SDP + signaling ONCE</string>
+			<key>defaults</key><string>com.apple.bluetooth</string>
+			<key>key</key><string>BTPhonoSinkV82DecisiveOnce</string>
+			<key>default</key><false/>
+		</dict>
 	</array>
 	<key>title</key>
 	<string>BTPhonoSink</string>
