@@ -53,6 +53,15 @@ static int play_decoded_sbc(NSData *wav) {
         return 1;
     }
     AVAudioPlayer *player=[[AVAudioPlayer alloc]initWithData:wav error:&err];
+    if (player) player.volume = 1.0f;
+    AVAudioSessionRouteDescription *route = session.currentRoute;
+    for (AVAudioSessionPortDescription *output in route.outputs) {
+        printf("SBC_AUDIO_ROUTE port=%s name=%s volume=%.3f\n",
+               (output.portType ?: @"unknown").UTF8String,
+               (output.portName ?: @"unknown").UTF8String,
+               session.outputVolume);
+    }
+    fflush(stdout);
     if(!player || ![player prepareToPlay] || ![player play]) {
         fprintf(stderr,"AUDIO_FAIL stage=player error=%s\n",(err.localizedDescription?:@"start failed").UTF8String);
         [session setActive:NO error:NULL];return 2;
@@ -119,6 +128,7 @@ int main(int argc,const char **argv) {
         int reuse=1;setsockopt(listener,SOL_SOCKET,SO_REUSEADDR,&reuse,sizeof(reuse));
         if(bind(listener,(struct sockaddr*)&address,sizeof(address))!=0 || listen(listener,1)!=0){
             perror("bind/listen loopback");close(listener);return 2;}
+        printf("BTPS_HELPER_MODE=%s\n",play_sbc_mode?"SBC_PLAY_DECODE_AND_OUTPUT":(sbc_mode?"SBC_VERIFY_ONLY_NO_SOUND":(daemon_mode?"PCM_DAEMON":"PCM_SETTINGS")));
         printf("BTPS_%s_READY pid=%ld port=%d token=%06u timeout=%ds\n",
                play_sbc_mode?"V76_SBC_PLAY":(sbc_mode?"V75_SBC":(daemon_mode?"V74_DAEMON":"V74_SETTINGS")),(long)getpid(),BTPS_IPC_PORT,token,seconds);
         printf("On iPhone: Settings > BTPhonoSink > Debug log > %s; enter token %06u.\n",
@@ -157,9 +167,10 @@ int main(int argc,const char **argv) {
             NSError *err=nil;
             [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:&err];
             BOOL saved=[[NSData dataWithBytes:frames length:decoded_size] writeToFile:path options:NSDataWritingAtomic error:&err];
-            if(saved)printf("SBC_CAPTURE_SAVED path=%s bytes=%zu (compressed stream only; not decoded/played)\n",path.UTF8String,decoded_size);
+            if(saved)printf("SBC_CAPTURE_SAVED path=%s bytes=%zu (compressed SBC; playback occurs only in --sbc-play mode)\n",path.UTF8String,decoded_size);
             else printf("SBC_CAPTURE_SAVE_FAIL %s (transport validation still passed)\n",(err.localizedDescription?:@"unknown").UTF8String);
-            /* ACK is about framing; decode and audio output are independently tested below. */
+            /* IMPORTANT: this ACK proves only transport/framing. It is NOT a decode or playback ACK.
+             * The daemon's diag.v75_sbc PASS must never be interpreted as audio playback success. */
             reply(fd,"SBC_VERIFIED");close(fd);free(blob);
             if(play_sbc_mode) {
                 const size_t slot_count=2u*33024u;
@@ -169,7 +180,8 @@ int main(int argc,const char **argv) {
                 free(frames);
                 if(dr!=0) {
                     printf("SBC_DECODE_FAIL code=%d frames=%zu samples_per_channel=%zu\n",dr,fcount,nsamples);
-                    free(pcm);return 8;
+                    puts("BTPS_V76_RESULT ipc=PASS rtp=PASS sbc_frames=PASS decode=FAIL audio_api=NOT_STARTED live_bluetooth=NO");
+                    fflush(stdout);free(pcm);return 8;
                 }
                 size_t clipped=0;long double sumsq=0;
                 for(size_t k=0;k<nsamples*2u;k++){
@@ -183,10 +195,13 @@ int main(int argc,const char **argv) {
                        fcount,nsamples,rate,channels,rms,clip_rate*100.0);
                 fflush(stdout);
                 if(clip_rate>0.01 || rms<0.01 || rms>0.4) {
-                    printf("SBC_FIDELITY_FAIL unexpected output levels; playback skipped\n");free(pcm);return 9;
+                    puts("SBC_FIDELITY_FAIL unexpected output levels; playback skipped");
+                    puts("BTPS_V76_RESULT ipc=PASS rtp=PASS sbc_frames=PASS decode=PASS fidelity=FAIL audio_api=NOT_STARTED live_bluetooth=NO");
+                    fflush(stdout);free(pcm);return 9;
                 }
-                NSData *wav=wav_from_sbc_pcm(pcm,nsamples);free(pcm);
-                if(!wav){puts("SBC_WAV_FAIL allocation");return 10;}
+                /* Preserve the unmodified decoded WAV for independent comparison with FFmpeg. */
+                NSData *wav=wav_from_sbc_pcm(pcm,nsamples);
+                if(!wav){free(pcm);puts("SBC_WAV_FAIL allocation");return 10;}
                 NSString *wav_path=[dir stringByAppendingPathComponent:
                     [NSString stringWithFormat:@"BTPhonoSink-v76-%ld-%lld.wav",(long)getpid(),(long long)[[NSDate date] timeIntervalSince1970]]];
                 NSError *wav_error=nil;
@@ -194,7 +209,23 @@ int main(int argc,const char **argv) {
                 if(saved_pcm)printf("SBC_DECODED_WAV_SAVED path=%s bytes=%zu\n",wav_path.UTF8String,(size_t)wav.length);
                 else printf("SBC_WAV_SAVE_FAIL error=%s\n",(wav_error.localizedDescription?:@"unknown").UTF8String);
                 fflush(stdout);
-                int playback=play_decoded_sbc(wav);
+                /* The source fixture is low level (roughly -24 dBFS RMS). Boost only
+                 * the PLAYBACK copy, never the saved/reference WAV or decoder output.
+                 * Capped by peak level and 4x gain to avoid clipping / loud surprises. */
+                int peak=0;
+                for(size_t k=0;k<nsamples*2u;k++){
+                    int v=(int)pcm[k];if(v<0)v=-v;if(v>peak)peak=v;
+                }
+                double gain = peak>0 ? fmin(4.0,14000.0/(double)peak) : 1.0;
+                for(size_t k=0;k<nsamples*2u;k++){
+                    pcm[k]=(int16_t)lrint((double)pcm[k]*gain);
+                }
+                NSData *playbackWav=wav_from_sbc_pcm(pcm,nsamples);
+                free(pcm);
+                printf("SBC_AUDIO_PREP original_peak=%d playback_gain=%.3f target_max_peak=14000 saved_reference_unmodified=YES\n",peak,gain);
+                fflush(stdout);
+                if(!playbackWav){puts("SBC_PLAYBACK_WAV_FAIL allocation");return 10;}
+                int playback=play_decoded_sbc(playbackWav);
                 printf("BTPS_V76_RESULT ipc=PASS rtp=PASS sbc_frames=PASS decode=PASS audio_api=%s live_bluetooth=NO\n",
                     playback==0?"FINISHED":"FAILED");fflush(stdout);
                 return playback==0?0:11;
