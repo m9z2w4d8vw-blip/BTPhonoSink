@@ -1,5 +1,5 @@
 /*
- * BTPhonoSink - v7.8 read-only AVDTP capacity inspection.
+ * BTPhonoSink - v7.9 read-only AVDTP allocation-geometry inspection.
  *
  * Goal of the project: make the iPhone show up as a Bluetooth speaker (A2DP sink). Nobody knows yet whether the
  * daemon's stack can be taught that, so this build only WATCHES. Everything it sees is written to the debug log
@@ -67,8 +67,9 @@
 #include "BTPSShared.h"
 #include "BTPSDaemonProbe.h"
 #include "BTPSV78Capacity.h"
+#include "BTPSV79Geometry.h"
 
-#define BTPS_BUILD_TAG "v7.8-readonly-capacity-audit"
+#define BTPS_BUILD_TAG "v7.9-readonly-allocator-audit"
 
 /* AVDTP constants, used for native Source registration diagnostics */
 #define BTPS_AVDTP_TSEP_SRC 0u
@@ -326,6 +327,82 @@ static void btps_v78_snapshot_capacity(void)
 
 
 
+/* v7.9: Exact-image static instructions identify the constructor which
+ * obtains AVDTP configuration block #3, then allocates three independent
+ * arrays of config byte [0]*40, [1]*144, and [2]*64 bytes. We ONLY read
+ * the registered configuration pointer and the already-live context.
+ * There are NO allocator hooks, calls into private init, or changes to counts.
+ */
+static volatile unsigned g_v79_snapshots = 0;
+static int btps_v79_signatures_match(void)
+{
+    if (!g_v78_exact_uuid || !g_v78_base) return 0;
+    struct sig_at { uintptr_t offset; uint32_t word; } s[] = {
+        {0x0ce3f8u, 0x52800060u}, /* mov w0,#3: AVDTP configuration slot */
+        {0x0ce3fcu, 0x94049ec9u}, /* bl config getter */
+        {0x0ce408u, 0x52800d00u}, /* mov w0,#0x68: context allocation */
+        {0x0ce41cu, 0x394002e8u}, /* ldrb w8,[x23]: endpoint count */
+        {0x0ce424u, 0xd37df100u}, /* lsl x0,x8,#3 (after x8=5*count) */
+        {0x0ce428u, 0x97ff6f1du}, /* bl allocator: endpoint bytes */
+        {0x0ce434u, 0xf9000018u}, /* str x24,[x0]: endpoint pointer */
+        {0x0ce470u, 0xd37ced00u}, /* lsl x0,x8,#4: secondary bytes */
+        {0x0ce4d4u, 0xd37ae500u}, /* lsl x0,x8,#6: tertiary bytes */
+        {0x0ce4f4u, 0x39018008u}, /* strb w8,[x0,#0x60]: live slot count */
+        {0x1f5f20u, 0xd503237fu}, /* PAC-protected configuration lookup */
+        {0x1f5f48u, 0xf8735a80u}, /* ldr x0,[x20,w19,uxtw #3] */
+    };
+    for (size_t i = 0; i < sizeof s / sizeof s[0]; ++i) {
+        uint32_t word = 0;
+        if (!btps_peek((uint64_t)(g_v78_base + s[i].offset), &word, sizeof word) ||
+            word != s[i].word) return 0;
+    }
+    return 1;
+}
+static void btps_v79_snapshot_geometry(void)
+{
+    if (!__sync_bool_compare_and_swap(&g_v79_snapshots, 0u, 1u)) return;
+    if (!btps_v79_signatures_match()) {
+        BTPSSetStatus("diag.v79_allocator", "UNAVAILABLE: exact UUID or instruction signatures differ");
+        BTPSLogNow("V79_ALLOC SKIPPED: cannot verify exact initializer and lookup instructions");
+        return;
+    }
+    /* The config getter uses pointer table image+0x984a48 and index 3.
+       We READ pointer table entry image+0x984a60, never call the getter. */
+    uint64_t config_ptr = 0, context_ptr = 0;
+    uint8_t config[3] = {0}, live[3] = {0};
+    uint64_t tables[3] = {0};
+    if (!btps_peek((uint64_t)(g_v78_base + 0x984a60u), &config_ptr, sizeof config_ptr) ||
+        !config_ptr || !btps_peek(config_ptr, config, sizeof config) ||
+        !btps_peek((uint64_t)(g_v78_base + 0x9768b0u), &context_ptr, sizeof context_ptr) ||
+        !context_ptr || !btps_peek(context_ptr, tables, sizeof tables) ||
+        !btps_peek(context_ptr + 0x60u, live, sizeof live)) {
+        BTPSSetStatus("diag.v79_allocator", "UNREADABLE: config pointer or live allocation metadata");
+        BTPSLogNow("V79_ALLOC UNREADABLE: config pointer or live allocation metadata");
+        return;
+    }
+    unsigned present = 0;
+    for (unsigned i = 0; i < 3; i++) if (tables[i]) present |= (1u << i);
+    BTPSV79Geometry result;
+    int rc = btps_v79_analyze(config, live, present, &result);
+    if (rc != 0) {
+        BTPSSetStatus("diag.v79_allocator", "INVALID: config/context counts are out of bounds (code=%d)", rc);
+        BTPSLogNow("V79_ALLOC INVALID: bounded geometry rejected rc=%d", rc);
+        return;
+    }
+    BTPSSetStatus("diag.v79_allocator",
+        "READ-ONLY config=(%u,%u,%u) live=(%u,%u,%u) request_bytes=(%u,%u,%u) match=%s missing_mask=%u",
+        result.configured[0], result.configured[1], result.configured[2],
+        result.observed[0], result.observed[1], result.observed[2],
+        result.bytes[0], result.bytes[1], result.bytes[2],
+        result.config_matches_context ? "yes" : "NO", result.missing_table_mask);
+    BTPSLogNow("V79_ALLOC RESULT config=(%u,%u,%u) live=(%u,%u,%u) request_bytes=(%u,%u,%u) match=%s missing_mask=%u; READ ONLY",
+        result.configured[0], result.configured[1], result.configured[2],
+        result.observed[0], result.observed[1], result.observed[2],
+        result.bytes[0], result.bytes[1], result.bytes[2],
+        result.config_matches_context ? "yes" : "NO", result.missing_table_mask);
+    BTPSLogNow("V79_ALLOC NOTE: constructor uses config[0]*40, config[1]*144, config[2]*64; byte counts are allocation REQUESTS, not measured heap extents");
+}
+
 static uint64_t hook_register(uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3,
                               uint64_t a4, uint64_t a5, uint64_t a6, uint64_t a7)
 {
@@ -399,6 +476,7 @@ static uint64_t hook_register(uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3
                 BTPSLogNow("MILESTONE all six observed native Source endpoints registered; no Sink inserted");
                 BTPSSetStatus("diag.capacity", "six native Source registrations; free space unverified");
                 btps_v78_snapshot_capacity();
+                btps_v79_snapshot_geometry();
             }
         } else {
             BTPSLogNow("FAIL native Source registration #%u status %#llx (%s)",
@@ -695,14 +773,15 @@ static void install_hooks(uintptr_t base, int uuid_ok)
     BTPSSetStatus("build", "%s, %s %s", BTPS_BUILD_TAG, __DATE__, __TIME__);
     BTPSSetStatus("pid", "%d", (int)getpid());
     BTPSSetStatus("experiments", "off (v7 forced-passive, stored=%s)", BTPSExperimentsEnabled() ? "ON" : "off");
-    BTPSSetStatus("experiment.sink_register", "v7.8: ALL Sink registration experiments disabled");
+    BTPSSetStatus("experiment.sink_register", "v7.9: ALL Sink registration experiments disabled");
     BTPSSetStatus("diag.sdp_sink_0x110b", "no local Sink SDP publishing implemented; verify externally");
     BTPSSetStatus("diag.audio_receive", "NOT hooked - media transport/decoder wiring absent");
     BTPSSetStatus("diag.v77_sink_trial", "DISABLED permanently in v7.8 after return 0x68");
     BTPSSetStatus("diag.v78_table", "PENDING: read-only table scan after six normal Sources");
-    BTPSSetStatus("diag.stage", "read-only AVDTP capacity table audit; no Sink, SDP or live receive");
+    BTPSSetStatus("diag.v79_allocator", "PENDING: allocation geometry after six normal Sources");
+    BTPSSetStatus("diag.stage", "read-only AVDTP allocation and capacity audit; no Sink, SDP or live receive");
     BTPSSetStatus("diag.session_id", "%ld-%d", (long)time(NULL), (int)getpid());
-    BTPSLogNow("SESSION start pid=%d read-only AVDTP endpoint table audit; no registration attempts", (int)getpid());
+    BTPSLogNow("SESSION start pid=%d read-only AVDTP allocation/table audit; no registration attempts", (int)getpid());
 
     char exe[512];
     uint32_t exe_size = sizeof exe;

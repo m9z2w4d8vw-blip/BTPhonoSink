@@ -1,11 +1,19 @@
-# BTPhonoSink v7.8 — read-only AVDTP endpoint capacity audit
+# BTPhonoSink v7.9 — read-only Bluetooth endpoint allocation research
 
-The iPhone's v7.7 extra A2DP Sink SEP request returned **0x68** and SEID **0** after all six Source SEPs succeeded. Disassembly of the exact device `bluetoothd` at image+`0xCECF0` shows that `0x68` is the default return when the routine exhausts its candidate-SEID/slot search without finding a free slot.
+The iPhone's AVDTP stack currently registers six native A2DP Source endpoints and the v7.7
+seventh Sink trial returned `0x68`. v7.8 verified **6/6 occupied endpoint slots**.
 
-**v7.8 is passive.** It DISABLES the v7.7 one-shot Sink registration even if the old switch is stored as ON. Following successful registration of Apple's six normal Sources, it safely reads the private table pointer, count, SEID cursor, and up to 32 endpoint records, and logs occupancy (0x28-byte stride, nonzero byte at +0x19). It does not change the table, add endpoints or SDP services, receive live media, or affect the proven PCM/SBC helper pipeline.
+The exact device's `bluetoothd` binary additionally shows that initialization reads
+**configuration block 3** and allocates three arrays sized **config[0]×40**,
+**config[1]×144**, and **config[2]×64** bytes. The first requested size is the endpoint
+array. v7.9 reads the original three configuration bytes and the corresponding live state,
+without changing anything, so we can establish how the endpoint capacity is provisioned.
 
-The read is gated on the exact binary UUID, and six hardcoded instruction-word signatures must match the **same** binary. An unexpected pointer, large table, or unreadable page aborts the snapshot without a crash. Unsupported firmware produces an `UNAVAILABLE` status.
+**There is NO slot expansion, Sink registration, SDP 0x110B publication or live Bluetooth
+reception in v7.9.** Legacy Sink remains disabled. All five passive hooks, the optional
+read-only SDP observer (OFF by default), original headphones behavior, iCloud export, and
+previous manually triggered IPC/SBC helper playback tests are preserved.
 
-[Disassembly and reason for 0x68](docs/V78_AVDTP_CAPACITY_FINDINGS.md) | [Testing procedure](TESTING-v7.8.md).
-
-**Workarounds under investigation, not yet implemented:** separate/sidecar AVDTP service outside Apple's fixed endpoint array (requires private controller access); deliberate reduction of redundant native Source registrations (would sacrifice native profiles and is risky); changing Apple stack allocation and count (requires understanding allocation, owners, lifetimes and all usages, not just patching a counter). We will not write past the current allocation.
+- [v7.9 testing instructions](TESTING-v7.9.md)
+- [Disassembly-based allocation research](docs/V79_AVDTP_ALLOCATION_FINDINGS.md)
+- [v7.8 endpoint search and error 0x68](docs/V78_AVDTP_CAPACITY_FINDINGS.md)

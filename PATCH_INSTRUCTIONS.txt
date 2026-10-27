@@ -1,0 +1,22 @@
+BTPhonoSink v7.9 — READ-ONLY AVDTP ALLOCATION-GEOMETRY AUDIT
+
+Small patch: update changed source files at their EXACT repository paths; do not
+place them in the GitHub repository root just because they came from a ZIP.
+
+For files inside btphonosinkprefs/ or tests/ or docs/, open the matching
+GitHub subfolder before uploading. The patch contains 17 changed/new files,
+well below GitHub's 100-file-per-upload limit.
+
+Add new files:
+  BTPSV79Geometry.c
+  BTPSV79Geometry.h
+  docs/V79_AVDTP_ALLOCATION_FINDINGS.md
+  tests/test_v79_allocator.py
+  TESTING-v7.9.md
+
+Replace the other matching files with the versions in the patch.
+
+The optional SDP observer stays OFF; Legacy Sink stays OFF; the v7.7
+Sink trial stays compiled out. This build DOES NOT EXPAND SLOT CAPACITY.
+
+Test instructions: TESTING-v7.9.md

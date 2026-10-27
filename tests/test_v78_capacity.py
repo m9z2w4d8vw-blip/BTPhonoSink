@@ -46,7 +46,7 @@ class TestV78(unittest.TestCase):
         self.assertNotEqual(self.analyze(mem,len(mem),0,ctypes.byref(o)),0)
     def test_source_safety(self):
         src=(ROOT/'Tweak.xm').read_text()
-        self.assertIn('v7.8-readonly-capacity-audit',src)
+        self.assertIn('v7.9-readonly-allocator-audit',src)
         self.assertIn('btps_v78_snapshot_capacity();',src)
         self.assertIn('if (sources == 6u)',src)
         self.assertIn('g_v78_exact_uuid = uuid_ok;',src)
