@@ -1,5 +1,5 @@
 /*
- * BTPhonoSink - v7.9 read-only AVDTP allocation-geometry inspection.
+ * BTPhonoSink - v8.0 optional configuration lookup timing observer (no writes).
  *
  * Goal of the project: make the iPhone show up as a Bluetooth speaker (A2DP sink). Nobody knows yet whether the
  * daemon's stack can be taught that, so this build only WATCHES. Everything it sees is written to the debug log
@@ -69,7 +69,7 @@
 #include "BTPSV78Capacity.h"
 #include "BTPSV79Geometry.h"
 
-#define BTPS_BUILD_TAG "v7.9-readonly-allocator-audit"
+#define BTPS_BUILD_TAG "v8.0-readonly-config-lookup"
 
 /* AVDTP constants, used for native Source registration diagnostics */
 #define BTPS_AVDTP_TSEP_SRC 0u
@@ -403,6 +403,87 @@ static void btps_v79_snapshot_geometry(void)
     BTPSLogNow("V79_ALLOC NOTE: constructor uses config[0]*40, config[1]*144, config[2]*64; byte counts are allocation REQUESTS, not measured heap extents");
 }
 
+/* v8.0: Optional pass-through observer for Apple's configuration getter.
+ * AVDTP init calls this exact function (image+0x1f5f20) with index 3 to
+ * obtain the three count bytes BEFORE allocating the three AVDTP arrays.
+ * No count, returned pointer, allocation, callback, or state is modified.
+ * Enabling this is a separate opt-in hook on undocumented code. */
+#define BTPS_V80_GET_CONFIG_ENTRY 0x001f5f20u
+static const uint32_t BTPS_V80_GET_CONFIG_SIG[4] = {
+    0xd503237fu, 0xa9be4ff4u, 0xa9017bfdu, 0x910043fdu
+};
+static btps_fn_t g_v80_get_config_orig = NULL;
+static volatile unsigned g_v80_get_calls = 0;
+static volatile unsigned g_v80_index3_calls = 0;
+static int g_v80_enabled = 0;
+
+static uint64_t btps_v80_hook_get_config(uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3,
+                                         uint64_t a4, uint64_t a5, uint64_t a6, uint64_t a7)
+{
+    /* Forward first, and return its EXACT pointer without touching it. */
+    uint64_t value = g_v80_get_config_orig ?
+        g_v80_get_config_orig(a0,a1,a2,a3,a4,a5,a6,a7) : 0;
+    __sync_add_and_fetch(&g_v80_get_calls, 1u);
+    if ((uint32_t)a0 != 3u) return value;
+    unsigned hit = __sync_add_and_fetch(&g_v80_index3_calls, 1u);
+    if (hit > 4u) return value;
+    uint8_t cfg[3] = {0};
+    uint64_t in_table = 0;
+    int read_ok = value && btps_peek(value, cfg, sizeof cfg);
+    int table_ok = btps_peek((uint64_t)(g_v78_base + 0x984a60u), &in_table, sizeof in_table);
+    BTPSLogNow("V80_CFG_GET index=3 call=%u result=%#llx readable=%s bytes=(%u,%u,%u) matches_table=%s; ORIGINAL RETURN UNCHANGED",
+               hit, (unsigned long long)value, read_ok ? "yes" : "no",
+               (unsigned)cfg[0], (unsigned)cfg[1], (unsigned)cfg[2],
+               (table_ok && value == in_table) ? "yes" : "no");
+    BTPSSetStatus("diag.v80_config_lookup",
+                  "OBSERVED index=3 calls=%u bytes=(%u,%u,%u) getter_matches_table=%s; read-only",
+                  hit,(unsigned)cfg[0],(unsigned)cfg[1],(unsigned)cfg[2],
+                  (table_ok && value == in_table) ? "yes" : "no");
+    return value;
+}
+
+static int btps_v80_requested(void)
+{
+    CFPropertyListRef v = CFPreferencesCopyAppValue(CFSTR(BTPS_KEY_V80_CFG_OBSERVER),
+                                                   CFSTR(BTPS_PREFS_DOMAIN));
+    int enabled = v && CFGetTypeID(v) == CFBooleanGetTypeID() &&
+                  CFBooleanGetValue((CFBooleanRef)v);
+    if (v) CFRelease(v);
+    return enabled;
+}
+
+static void btps_v80_install_config_observer(uintptr_t base, int uuid_ok)
+{
+    if (!btps_v80_requested()) {
+        BTPSSetStatus("diag.v80_config_lookup", "OFF (default), no extra hook");
+        BTPSLogNow("V80_CFG_GET observer OFF; no config getter hook installed");
+        return;
+    }
+    if (!uuid_ok || !g_orig[BTPS_H_REGISTER] || !g_orig[BTPS_H_ADVERTISE]) {
+        BTPSSetStatus("diag.v80_config_lookup", "REFUSED: exact UUID and baseline hooks required");
+        return;
+    }
+    uint32_t observed[4] = {0};
+    uintptr_t target = base + BTPS_V80_GET_CONFIG_ENTRY;
+    if (!btps_peek(target, observed, sizeof observed) ||
+        memcmp(observed, BTPS_V80_GET_CONFIG_SIG, sizeof observed) != 0) {
+        BTPSSetStatus("diag.v80_config_lookup", "REFUSED: config getter signature mismatch");
+        BTPSLogNow("V80_CFG_GET refused: getter instruction signature mismatch");
+        return;
+    }
+    void *trampoline = NULL;
+    MSHookFunction((void *)target, (void *)btps_v80_hook_get_config, &trampoline);
+    if (!trampoline) {
+        BTPSSetStatus("diag.v80_config_lookup", "FAILED: no trampoline, switch OFF");
+        BTPSLogNow("V80_CFG_GET FAILED: hook engine returned no trampoline");
+        return;
+    }
+    g_v80_get_config_orig = (btps_fn_t)trampoline;
+    g_v80_enabled = 1;
+    BTPSSetStatus("diag.v80_config_lookup", "ARMED: pass-through getter observer, awaiting index=3");
+    BTPSLogNow("V80_CFG_GET installed at image+0x1f5f20; all original pointers/bytes returned unchanged");
+}
+
 static uint64_t hook_register(uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3,
                               uint64_t a4, uint64_t a5, uint64_t a6, uint64_t a7)
 {
@@ -477,6 +558,13 @@ static uint64_t hook_register(uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3
                 BTPSSetStatus("diag.capacity", "six native Source registrations; free space unverified");
                 btps_v78_snapshot_capacity();
                 btps_v79_snapshot_geometry();
+                /* Did the optional getter probe reach the index-3 lookup before registration? */
+                if (g_v80_enabled && g_v80_index3_calls == 0u) {
+                    BTPSSetStatus("diag.v80_config_lookup",
+                                  "NO_INDEX3_CALL_OBSERVED before six Sources; cannot infer hook timing");
+                    BTPSLogNow("V80_CFG_GET no index=3 call observed before native Sources registered");
+                }
+
             }
         } else {
             BTPSLogNow("FAIL native Source registration #%u status %#llx (%s)",
@@ -773,15 +861,16 @@ static void install_hooks(uintptr_t base, int uuid_ok)
     BTPSSetStatus("build", "%s, %s %s", BTPS_BUILD_TAG, __DATE__, __TIME__);
     BTPSSetStatus("pid", "%d", (int)getpid());
     BTPSSetStatus("experiments", "off (v7 forced-passive, stored=%s)", BTPSExperimentsEnabled() ? "ON" : "off");
-    BTPSSetStatus("experiment.sink_register", "v7.9: ALL Sink registration experiments disabled");
+    BTPSSetStatus("experiment.sink_register", "v8.0: ALL Sink registration experiments disabled");
     BTPSSetStatus("diag.sdp_sink_0x110b", "no local Sink SDP publishing implemented; verify externally");
     BTPSSetStatus("diag.audio_receive", "NOT hooked - media transport/decoder wiring absent");
     BTPSSetStatus("diag.v77_sink_trial", "DISABLED permanently in v7.8 after return 0x68");
     BTPSSetStatus("diag.v78_table", "PENDING: read-only table scan after six normal Sources");
     BTPSSetStatus("diag.v79_allocator", "PENDING: allocation geometry after six normal Sources");
-    BTPSSetStatus("diag.stage", "read-only AVDTP allocation and capacity audit; no Sink, SDP or live receive");
+    BTPSSetStatus("diag.v80_config_lookup", "PENDING: optional observer not installed yet");
+    BTPSSetStatus("diag.stage", "read-only endpoint audit plus optional config-getter timing observer; no Sink, SDP or live receive");
     BTPSSetStatus("diag.session_id", "%ld-%d", (long)time(NULL), (int)getpid());
-    BTPSLogNow("SESSION start pid=%d read-only AVDTP allocation/table audit; no registration attempts", (int)getpid());
+    BTPSLogNow("SESSION start pid=%d read-only allocation audit; optional OFF-by-default config getter observer; no registration attempts", (int)getpid());
 
     char exe[512];
     uint32_t exe_size = sizeof exe;
@@ -817,6 +906,7 @@ static void install_hooks(uintptr_t base, int uuid_ok)
     g_v78_exact_uuid = uuid_ok;
     g_v78_base = (uintptr_t)mh;
     install_hooks((uintptr_t)mh, uuid_ok);
+    btps_v80_install_config_observer((uintptr_t)mh, uuid_ok);
     install_optional_sdp_probe((uintptr_t)mh, uuid_ok);
     /* Explicit user request only; no sockets or audio on Bluetooth callback threads. */
     if (uuid_ok && g_orig[BTPS_H_REGISTER] && g_orig[BTPS_H_ADVERTISE]) {

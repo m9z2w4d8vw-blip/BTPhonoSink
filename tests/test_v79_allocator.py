@@ -61,7 +61,7 @@ class TestV79(unittest.TestCase):
         self.assertNotEqual(self.check([6,1,1],[6,1,1],8)[0],0)
     def test_source_uses_only_memory_reads(self):
         source=(ROOT/'Tweak.xm').read_text()
-        block=source.split('static void btps_v79_snapshot_geometry(void)',1)[1].split('static uint64_t hook_register(',1)[0]
+        block=source.split('static void btps_v79_snapshot_geometry(void)',1)[1].split('/* v8.0: Optional pass-through observer',1)[0]
         self.assertIn('g_v78_exact_uuid',source)
         self.assertIn('btps_v79_signatures_match()',block)
         self.assertIn('btps_peek',block)
@@ -83,7 +83,7 @@ class TestV79(unittest.TestCase):
                        '0x0ce470u', '0x0ce4d4u', '0x0ce4f4u', '0x1f5f48u',
                        '0x984a60u', '0x9768b0u']:
             self.assertIn(offset, source)
-        self.assertIn('v7.9-readonly-allocator-audit', source)
+        self.assertIn('v8.0-readonly-config-lookup', source)
     def test_documented_limitations(self):
         docs=(ROOT/'docs/V79_AVDTP_ALLOCATION_FINDINGS.md').read_text()
         for needle in ['0xCE428', '0xCE4F4', '0x984a60', 'NOT', 'no allocation']:

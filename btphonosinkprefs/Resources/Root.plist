@@ -106,6 +106,26 @@
 			<key>label</key>
 			<string>Trace existing SDP records (advanced)</string>
 		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>v8.0 init lookup observation</string>
+			<key>footerText</key>
+			<string>OFF by default. Advanced test: installs an additional pass-through hook on the private AVDTP config getter on the next bluetoothd launch. Never changes its result or allocates endpoints. Only enable after confirming headphone playback; disable and restart if Bluetooth becomes unstable.</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>label</key>
+			<string>Trace AVDTP config lookup (advanced)</string>
+			<key>defaults</key>
+			<string>com.apple.bluetooth</string>
+			<key>key</key>
+			<string>BTPhonoSinkV80ConfigLookupObserver</string>
+			<key>default</key>
+			<false/>
+		</dict>
 	</array>
 	<key>title</key>
 	<string>BTPhonoSink</string>

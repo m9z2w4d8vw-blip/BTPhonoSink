@@ -6,7 +6,7 @@ class DaemonProbeTests(unittest.TestCase):
     def test_the_daemon_probe_is_a_separate_file_not_a_bluetooth_callback(self):
         tweak=(ROOT/'Tweak.xm').read_text()
         self.assertIn('BTPSDaemonProbeStart();',tweak)
-        self.assertIn('"v7.9-readonly-allocator-audit"',tweak)
+        self.assertIn('"v8.0-readonly-config-lookup"',tweak)
         self.assertNotIn('socket(',tweak)
         self.assertNotIn('send(',tweak)
         self.assertNotIn('btps_ipc_encode_daemon_v74',tweak)
