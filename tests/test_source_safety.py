@@ -7,7 +7,7 @@ SOURCE=(ROOT/'Tweak.xm').read_text(encoding='utf-8')
 
 class SourceSafetyTests(unittest.TestCase):
     def test_v7_tag(self):
-        self.assertIn('#define BTPS_BUILD_TAG "v8.0-readonly-config-lookup"', SOURCE)
+        self.assertIn('#define BTPS_BUILD_TAG "v8.1-one-shot-seven-slot"', SOURCE)
     def test_original_registration_called_once(self):
         hook=SOURCE.split('static uint64_t hook_register(',1)[1].split('/* ------------------------------------------------------------------------------------------------ v7 SDP observer',1)[0]
         # One pass-through Source registration and one guarded, separate trial.

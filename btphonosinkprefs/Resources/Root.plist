@@ -126,6 +126,26 @@
 			<key>default</key>
 			<false/>
 		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>v8.1: One-time capacity test</string>
+			<key>footerText</key>
+			<string>Advanced, potentially disruptive. Default OFF. If armed, next bluetoothd restart consumes this switch before attempting to change AVDTP initializer count from 6 to 7 using a persistent shadow config. NO Sink endpoint is registered. Verify headphone behavior and export log, then check switch reset OFF. Recovery: turn OFF and restart daemon or reinstall v8.0.</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>label</key>
+			<string>Arm seven slots for ONE restart</string>
+			<key>defaults</key>
+			<string>com.apple.bluetooth</string>
+			<key>key</key>
+			<string>BTPhonoSinkV81SevenOnce</string>
+			<key>default</key>
+			<false/>
+		</dict>
 	</array>
 	<key>title</key>
 	<string>BTPhonoSink</string>

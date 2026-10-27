@@ -1,17 +1,18 @@
-BTPhonoSink v8.0 READ-ONLY config getter timing probe
+BTPhonoSink v8.1 — ONE-SHOT seven-slot AVDTP allocation experiment
 
-Extract ZIP; upload the individual files to EXACT matching folders in
-https://github.com/m9z2w4d8vw-blip/BTPhonoSink. In particular,
-btphonosinkprefs/Resources/Root.plist MUST remain in that folder, and
-tests/*.py MUST remain inside tests/. Commit to main and check Actions.
-Do not upload a ZIP file itself as a repository file.
+1. Extract the small ZIP on Windows.
+2. In your GitHub repo, place each file into the SAME relative folder path.
+   In particular, do not upload files from tests/ or btphonosinkprefs/Resources/
+   to the repository root. Do not replace .github/workflows/build.yml;
+   that workflow is unchanged for this patch.
+3. Commit to main; confirm GitHub Actions SUCCEEDS before installing the .deb.
+4. Keep the working v8.0 .deb as a rollback.
+5. Follow TESTING-v8.1.md exactly. Confirm the OFF-state baseline before
+   arming the one-time seven-slot trial.
 
-First install with Legacy Sink=OFF, SDP tracing=OFF, v8.0 config
-getter observer=OFF. Ensure five original hooks and six native Sources
-and normal headphones all work. Then optionally turn only the new
-observer ON and restart bluetoothd. Look for V80_CFG_GET index=3,
-export debug log, switch observer OFF and restart again.
-
-This does NOT expand capacity, register a Sink, advertise SDP 0x110B,
-or receive audio over Bluetooth. Keep working v7.9 package for rollback.
-See TESTING-v8.0.md for full instructions.
+IMPORTANT: Potentially disruptive private bluetoothd initializer experiment.
+OFF by default; enabling changes returned AVDTP count from 6 to 7 for the
+NEXT daemon start ONLY. It does NOT register an A2DP Sink, publish SDP or
+receive Windows Bluetooth audio. One-shot preference must be disarmed
+successfully before the private getter returns modified data. If instability
+occurs, keep the switch OFF and restart Bluetooth; restore v8.0 if needed.

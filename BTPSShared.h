@@ -18,6 +18,7 @@
 #define BTPS_KEY_STATUS       "BTPhonoSinkStatus"        /* dictionary string -> string: self-test + hook state */
 #define BTPS_KEY_V77_SINK_TRIAL "BTPhonoSinkV77SinkTrial" /* OFF by default; one attempt after native Sources */
 #define BTPS_KEY_SDP_PROBE    "BTPhonoSinkSDPProbe"   /* OFF by default; optional read-only hook */
+#define BTPS_KEY_V81_SEVEN_ONCE "BTPhonoSinkV81SevenOnce" /* OFF by default, consumed before use */
 #define BTPS_KEY_V80_CFG_OBSERVER "BTPhonoSinkV80ConfigLookupObserver" /* OFF: pass-through getter timing observer */
 #define BTPS_KEY_EXPERIMENTS  "BTPhonoSinkExperiments"   /* boolean, flipped by the switch in the Settings pane */
 

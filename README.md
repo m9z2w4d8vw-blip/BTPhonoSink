@@ -1,3 +1,7 @@
+# BTPhonoSink v8.1 — One-shot seven-slot allocation experiment
+
+**New in v8.1:** Optional one-restart initializer-time config shadow returns `(7,3,3)` instead of `(6,3,3)` to Apple's existing allocator; separate read-only observer still works. This is **NOT** an A2DP Sink. No endpoint added, no SDP 0x110B, no Bluetooth audio receive. **Default OFF.** Automatic disarm must succeed before attempting override. Treat as high risk to Bluetooth availability and keep v8.0 available for rollback. See `TESTING-v8.1.md`.
+
 # BTPhonoSink v8.0 — optional read-only config lookup timing observation
 
 **No Bluetooth Sink has been implemented.** v7.9 verified that the three allocation

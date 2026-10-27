@@ -27,6 +27,6 @@ class HelperPlaybackDiagnostics(unittest.TestCase):
   self.assertIn('fmin(4.0,14000.0/(double)peak)',H)
   self.assertIn('fidelity=FAIL audio_api=NOT_STARTED',H)
  def test_daemon_unchanged(self):
-  self.assertIn('v8.0-readonly-config-lookup',(P/'Tweak.xm').read_text())
+  self.assertIn('v8.1-one-shot-seven-slot',(P/'Tweak.xm').read_text())
   self.assertIn('V75_SBC armed:',(P/'BTPSDaemonProbe.c').read_text())
 if __name__=='__main__':unittest.main()

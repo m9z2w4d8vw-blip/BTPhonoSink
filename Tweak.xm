@@ -1,8 +1,9 @@
 /*
- * BTPhonoSink - v8.0 optional configuration lookup timing observer (no writes).
+ * BTPhonoSink - v8.1 one-shot initializer capacity experiment (OFF by default).
  *
  * Goal of the project: make the iPhone show up as a Bluetooth speaker (A2DP sink). Nobody knows yet whether the
- * daemon's stack can be taught that, so this build only WATCHES. Everything it sees is written to the debug log
+ * daemon's stack can be taught that, so the default build only WATCHES; an explicitly armed ONE-SHOT
+ * initializer count override changes only the returned config shadow. Everything is written to the debug log
  * that Settings > BTPhonoSink displays.
  *
  * What it does:
@@ -68,8 +69,9 @@
 #include "BTPSDaemonProbe.h"
 #include "BTPSV78Capacity.h"
 #include "BTPSV79Geometry.h"
+#include "BTPSV81Config.h"
 
-#define BTPS_BUILD_TAG "v8.0-readonly-config-lookup"
+#define BTPS_BUILD_TAG "v8.1-one-shot-seven-slot"
 
 /* AVDTP constants, used for native Source registration diagnostics */
 #define BTPS_AVDTP_TSEP_SRC 0u
@@ -275,6 +277,14 @@ static int btps_v78_signature_matches(void)
     if (!g_v78_exact_uuid || !g_v78_base) return 0;
     for (size_t i = 0; i < sizeof s / sizeof s[0]; ++i) {
         uint32_t word = 0;
+        /* ElleKit/Substrate rewrites the getter prologue. Verify its ORIGINAL
+         * four words before installing the hook; do not re-read a patched
+         * instruction and mistake it for a different iOS build. All other
+         * initializer/lookup instructions are still checked live. */
+        if (s[i].offset == 0x1f5f20u && g_v80_enabled_for_v79_audit()) {
+            if (!g_v81_verified_initial_signature) return 0;
+            continue;
+        }
         if (!btps_peek((uint64_t)(g_v78_base + s[i].offset), &word, sizeof word) ||
             word != s[i].word) return 0;
     }
@@ -333,7 +343,10 @@ static void btps_v78_snapshot_capacity(void)
  * the registered configuration pointer and the already-live context.
  * There are NO allocator hooks, calls into private init, or changes to counts.
  */
+static int g_v80_enabled_for_v79_audit(void);
 static volatile unsigned g_v79_snapshots = 0;
+/* Captured before the optional getter hook changes its prologue. */
+static int g_v81_verified_initial_signature = 0;
 static int btps_v79_signatures_match(void)
 {
     if (!g_v78_exact_uuid || !g_v78_base) return 0;
@@ -353,6 +366,14 @@ static int btps_v79_signatures_match(void)
     };
     for (size_t i = 0; i < sizeof s / sizeof s[0]; ++i) {
         uint32_t word = 0;
+        /* ElleKit/Substrate rewrites the getter prologue. Verify its ORIGINAL
+         * four words before installing the hook; do not re-read a patched
+         * instruction and mistake it for a different iOS build. All other
+         * initializer/lookup instructions are still checked live. */
+        if (s[i].offset == 0x1f5f20u && g_v80_enabled_for_v79_audit()) {
+            if (!g_v81_verified_initial_signature) return 0;
+            continue;
+        }
         if (!btps_peek((uint64_t)(g_v78_base + s[i].offset), &word, sizeof word) ||
             word != s[i].word) return 0;
     }
@@ -403,11 +424,12 @@ static void btps_v79_snapshot_geometry(void)
     BTPSLogNow("V79_ALLOC NOTE: constructor uses config[0]*40, config[1]*144, config[2]*64; byte counts are allocation REQUESTS, not measured heap extents");
 }
 
-/* v8.0: Optional pass-through observer for Apple's configuration getter.
+/* v8.0/v8.1: Optional config getter observer or one-shot shadow override.
  * AVDTP init calls this exact function (image+0x1f5f20) with index 3 to
  * obtain the three count bytes BEFORE allocating the three AVDTP arrays.
- * No count, returned pointer, allocation, callback, or state is modified.
- * Enabling this is a separate opt-in hook on undocumented code. */
+ * In ordinary observation mode no count or pointer changes. In explicitly
+ * armed one-shot mode, the first validated index-3 call returns a static
+ * 32-byte copy with only the first count byte changed from 6 to 7. */
 #define BTPS_V80_GET_CONFIG_ENTRY 0x001f5f20u
 static const uint32_t BTPS_V80_GET_CONFIG_SIG[4] = {
     0xd503237fu, 0xa9be4ff4u, 0xa9017bfdu, 0x910043fdu
@@ -416,11 +438,70 @@ static btps_fn_t g_v80_get_config_orig = NULL;
 static volatile unsigned g_v80_get_calls = 0;
 static volatile unsigned g_v80_index3_calls = 0;
 static int g_v80_enabled = 0;
+static int g_v81_seven_armed = 0;
+static volatile unsigned g_v81_seven_applied = 0;
+static volatile unsigned g_v81_shadow_returned = 0;
+/* Original object at exact-image __TEXT,__const +0x774010 has a bounded
+ * 32-byte configuration record. This shadow has static process lifetime. */
+static uint8_t g_v81_shadow[BTPS_V81_CONFIG_COPY_BYTES] __attribute__((aligned(16)));
+static int g_v80_enabled_for_v79_audit(void) { return g_v80_enabled; }
+
+/* A request is CONSUMED before the hook can run. Do not retry automatically
+ * on daemon relaunch; fail closed if the preference cannot be cleared. */
+static int btps_v81_consume_one_shot(void)
+{
+    CFPropertyListRef initial = CFPreferencesCopyAppValue(CFSTR(BTPS_KEY_V81_SEVEN_ONCE),
+                                                          CFSTR(BTPS_PREFS_DOMAIN));
+    int requested = initial && CFGetTypeID(initial) == CFBooleanGetTypeID() &&
+                    CFBooleanGetValue((CFBooleanRef)initial);
+    if (initial) CFRelease(initial);
+    if (!requested) return 0;
+    CFPreferencesSetAppValue(CFSTR(BTPS_KEY_V81_SEVEN_ONCE), kCFBooleanFalse,
+                             CFSTR(BTPS_PREFS_DOMAIN));
+    Boolean synced = CFPreferencesAppSynchronize(CFSTR(BTPS_PREFS_DOMAIN));
+    CFPropertyListRef check = CFPreferencesCopyAppValue(CFSTR(BTPS_KEY_V81_SEVEN_ONCE),
+                                                        CFSTR(BTPS_PREFS_DOMAIN));
+    int disarmed = check && CFGetTypeID(check) == CFBooleanGetTypeID() &&
+                   !CFBooleanGetValue((CFBooleanRef)check);
+    if (check) CFRelease(check);
+    if (!synced || !disarmed) {
+        BTPSSetStatus("diag.v81_seven_slots", "REFUSED: cannot persist one-shot disarm");
+        BTPSLogNow("V81_CFG REFUSED: did not verify persistent one-shot disarm");
+        return 0;
+    }
+    BTPSLogNow("V81_CFG ARM CONSUMED: preference set OFF before any count changes");
+    BTPSSetStatus("diag.v81_seven_slots", "ARMED for next matching index-3 lookup (one shot)");
+    return 1;
+}
+
+/* This function is the ONLY path returning a changed config pointer.
+ * Refuse whenever the exact original source/data state is not expected. */
+static uint64_t btps_v81_try_seven(uint64_t original, unsigned hit)
+{
+    if (!g_v81_seven_armed || hit != 1u ||
+        !__sync_bool_compare_and_swap(&g_v81_seven_applied, 0u, 1u)) return original;
+    uint8_t source[BTPS_V81_CONFIG_COPY_BYTES] = {0};
+    uint64_t table_original = 0;
+    int good = g_v81_verified_initial_signature && g_v78_exact_uuid &&
+        btps_peek((uint64_t)(g_v78_base + 0x984a60u), &table_original, sizeof table_original) &&
+        table_original == original &&
+        btps_peek(original, source, sizeof source) &&
+        btps_v81_prepare_shadow(source, sizeof source, g_v81_shadow, 1) == 0;
+    if (!good) {
+        BTPSSetStatus("diag.v81_seven_slots", "REFUSED: config pointer/signature/count not exact");
+        BTPSLogNow("V81_CFG REFUSED index=3: preflight mismatch; ORIGINAL pointer returned");
+        return original;
+    }
+    g_v81_shadow_returned = 1u;
+    BTPSSetStatus("diag.v81_seven_slots", "OVERRIDE APPLIED once: config shadow=(7,3,3); verify live slots");
+    BTPSLogNow("V81_CFG SHADOW index=3 original=(6,3,3) returned=(7,3,3) pointer=STATIC; awaiting live audit");
+    return (uint64_t)(uintptr_t)g_v81_shadow;
+}
 
 static uint64_t btps_v80_hook_get_config(uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3,
                                          uint64_t a4, uint64_t a5, uint64_t a6, uint64_t a7)
 {
-    /* Forward first, and return its EXACT pointer without touching it. */
+    /* Always call the original first; pass it through unless v8.1 was explicitly armed. */
     uint64_t value = g_v80_get_config_orig ?
         g_v80_get_config_orig(a0,a1,a2,a3,a4,a5,a6,a7) : 0;
     __sync_add_and_fetch(&g_v80_get_calls, 1u);
@@ -431,14 +512,15 @@ static uint64_t btps_v80_hook_get_config(uint64_t a0, uint64_t a1, uint64_t a2, 
     uint64_t in_table = 0;
     int read_ok = value && btps_peek(value, cfg, sizeof cfg);
     int table_ok = btps_peek((uint64_t)(g_v78_base + 0x984a60u), &in_table, sizeof in_table);
-    BTPSLogNow("V80_CFG_GET index=3 call=%u result=%#llx readable=%s bytes=(%u,%u,%u) matches_table=%s; ORIGINAL RETURN UNCHANGED",
+    BTPSLogNow("V80_CFG_GET index=3 call=%u result=%#llx readable=%s bytes=(%u,%u,%u) matches_table=%s; original getter result (trial may subsequently return a shadow)",
                hit, (unsigned long long)value, read_ok ? "yes" : "no",
                (unsigned)cfg[0], (unsigned)cfg[1], (unsigned)cfg[2],
                (table_ok && value == in_table) ? "yes" : "no");
     BTPSSetStatus("diag.v80_config_lookup",
-                  "OBSERVED index=3 calls=%u bytes=(%u,%u,%u) getter_matches_table=%s; read-only",
+                  "OBSERVED index=3 calls=%u bytes=(%u,%u,%u) getter_matches_table=%s; original read-only",
                   hit,(unsigned)cfg[0],(unsigned)cfg[1],(unsigned)cfg[2],
                   (table_ok && value == in_table) ? "yes" : "no");
+    if (g_v81_seven_armed) return btps_v81_try_seven(value, hit);
     return value;
 }
 
@@ -454,13 +536,23 @@ static int btps_v80_requested(void)
 
 static void btps_v80_install_config_observer(uintptr_t base, int uuid_ok)
 {
-    if (!btps_v80_requested()) {
+    /* Disarm the one-shot setting even if later gates refuse installation. */
+    g_v81_seven_armed = btps_v81_consume_one_shot();
+    if (!btps_v80_requested() && !g_v81_seven_armed) {
         BTPSSetStatus("diag.v80_config_lookup", "OFF (default), no extra hook");
         BTPSLogNow("V80_CFG_GET observer OFF; no config getter hook installed");
         return;
     }
     if (!uuid_ok || !g_orig[BTPS_H_REGISTER] || !g_orig[BTPS_H_ADVERTISE]) {
         BTPSSetStatus("diag.v80_config_lookup", "REFUSED: exact UUID and baseline hooks required");
+        return;
+    }
+    /* Must be checked BEFORE MSHookFunction rewrites the getter prologue. */
+    g_v81_verified_initial_signature = btps_v79_signatures_match();
+    if (!g_v81_verified_initial_signature) {
+        BTPSSetStatus("diag.v80_config_lookup", "REFUSED: initializer/getter static signature mismatch");
+        BTPSSetStatus("diag.v81_seven_slots", "REFUSED: initializer/getter static signature mismatch");
+        BTPSLogNow("V81_CFG REFUSED: binary preflight signature mismatch");
         return;
     }
     uint32_t observed[4] = {0};
@@ -481,7 +573,7 @@ static void btps_v80_install_config_observer(uintptr_t base, int uuid_ok)
     g_v80_get_config_orig = (btps_fn_t)trampoline;
     g_v80_enabled = 1;
     BTPSSetStatus("diag.v80_config_lookup", "ARMED: pass-through getter observer, awaiting index=3");
-    BTPSLogNow("V80_CFG_GET installed at image+0x1f5f20; all original pointers/bytes returned unchanged");
+    BTPSLogNow("V80_CFG_GET installed at image+0x1f5f20; one-shot seven=%s; otherwise original return unchanged", g_v81_seven_armed ? "ARMED" : "OFF");
 }
 
 static uint64_t hook_register(uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3,
@@ -558,6 +650,19 @@ static uint64_t hook_register(uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3
                 BTPSSetStatus("diag.capacity", "six native Source registrations; free space unverified");
                 btps_v78_snapshot_capacity();
                 btps_v79_snapshot_geometry();
+                /* Independently verify that the ORIGINAL constructor allocated
+                 * seven entries. This is read-only and adds NO Sink endpoint. */
+                if (g_v81_shadow_returned) {
+                    uint64_t context = 0;
+                    uint8_t live_count = 0;
+                    int readable = btps_peek((uint64_t)(g_v78_base + 0x9768b0u), &context, sizeof context) &&
+                                   btps_peek(context + 0x60u, &live_count, sizeof live_count);
+                    BTPSSetStatus("diag.v81_seven_slots",
+                                  "ONE SHOT result: live_slots=%s%u expected=7 native_sources=6; no Sink registered",
+                                  readable ? "" : "unreadable/", (unsigned)live_count);
+                    BTPSLogNow("V81_LIVE RESULT readable=%s live_slots=%u expected=7 sources=6; no Sink added",
+                               readable ? "yes" : "no", (unsigned)live_count);
+                }
                 /* Did the optional getter probe reach the index-3 lookup before registration? */
                 if (g_v80_enabled && g_v80_index3_calls == 0u) {
                     BTPSSetStatus("diag.v80_config_lookup",
@@ -861,16 +966,17 @@ static void install_hooks(uintptr_t base, int uuid_ok)
     BTPSSetStatus("build", "%s, %s %s", BTPS_BUILD_TAG, __DATE__, __TIME__);
     BTPSSetStatus("pid", "%d", (int)getpid());
     BTPSSetStatus("experiments", "off (v7 forced-passive, stored=%s)", BTPSExperimentsEnabled() ? "ON" : "off");
-    BTPSSetStatus("experiment.sink_register", "v8.0: ALL Sink registration experiments disabled");
+    BTPSSetStatus("experiment.sink_register", "v8.1: ALL Sink registration experiments disabled");
     BTPSSetStatus("diag.sdp_sink_0x110b", "no local Sink SDP publishing implemented; verify externally");
     BTPSSetStatus("diag.audio_receive", "NOT hooked - media transport/decoder wiring absent");
     BTPSSetStatus("diag.v77_sink_trial", "DISABLED permanently in v7.8 after return 0x68");
     BTPSSetStatus("diag.v78_table", "PENDING: read-only table scan after six normal Sources");
     BTPSSetStatus("diag.v79_allocator", "PENDING: allocation geometry after six normal Sources");
     BTPSSetStatus("diag.v80_config_lookup", "PENDING: optional observer not installed yet");
-    BTPSSetStatus("diag.stage", "read-only endpoint audit plus optional config-getter timing observer; no Sink, SDP or live receive");
+    BTPSSetStatus("diag.v81_seven_slots", "OFF (default); no count overrides unless explicitly armed");
+    BTPSSetStatus("diag.stage", "one-shot seven-slot config shadow (OFF by default); no Sink, SDP or live receive");
     BTPSSetStatus("diag.session_id", "%ld-%d", (long)time(NULL), (int)getpid());
-    BTPSLogNow("SESSION start pid=%d read-only allocation audit; optional OFF-by-default config getter observer; no registration attempts", (int)getpid());
+    BTPSLogNow("SESSION start pid=%d optional one-shot 7-slot initializer config, OFF by default; no Sink registration", (int)getpid());
 
     char exe[512];
     uint32_t exe_size = sizeof exe;

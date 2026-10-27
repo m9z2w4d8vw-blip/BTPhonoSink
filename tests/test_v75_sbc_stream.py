@@ -75,7 +75,7 @@ class SBCStreamTests(unittest.TestCase):
   self.assertEqual(self.check(h,token,wire,len(self.fixture)),0)
  def test_safety_workflow(self):
   daemon=(ROOT/'Tweak.xm').read_text()
-  self.assertIn('"v8.0-readonly-config-lookup"',daemon)
+  self.assertIn('"v8.1-one-shot-seven-slot"',daemon)
   self.assertIn('BTPSDaemonProbeStartV75();',daemon)
   self.assertIn('if (uuid_ok && g_orig[BTPS_H_REGISTER] && g_orig[BTPS_H_ADVERTISE]) {',daemon)
   worker=(ROOT/'BTPSDaemonProbe.c').read_text()

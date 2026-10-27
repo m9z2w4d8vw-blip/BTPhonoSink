@@ -21,7 +21,7 @@ class V80ConfigGetterObserver(unittest.TestCase):
         self.assertIs(spec[0]['default'],False)
         self.assertEqual(spec[0]['defaults'],'com.apple.bluetooth')
         self.assertIn('BTPS_KEY_V80_CFG_OBSERVER', (ROOT/'BTPSShared.h').read_text())
-        self.assertIn('if (!btps_v80_requested())',SRC)
+        self.assertIn('if (!btps_v80_requested() && !g_v81_seven_armed)',SRC)
     def test_observer_does_not_change_input_output_or_register_sink(self):
         block=SRC.split('static uint64_t btps_v80_hook_get_config(',1)[1].split('static int btps_v80_requested(void)',1)[0]
         self.assertIn('g_v80_get_config_orig(a0,a1,a2,a3,a4,a5,a6,a7)',block)
