@@ -277,14 +277,6 @@ static int btps_v78_signature_matches(void)
     if (!g_v78_exact_uuid || !g_v78_base) return 0;
     for (size_t i = 0; i < sizeof s / sizeof s[0]; ++i) {
         uint32_t word = 0;
-        /* ElleKit/Substrate rewrites the getter prologue. Verify its ORIGINAL
-         * four words before installing the hook; do not re-read a patched
-         * instruction and mistake it for a different iOS build. All other
-         * initializer/lookup instructions are still checked live. */
-        if (s[i].offset == 0x1f5f20u && g_v80_enabled_for_v79_audit()) {
-            if (!g_v81_verified_initial_signature) return 0;
-            continue;
-        }
         if (!btps_peek((uint64_t)(g_v78_base + s[i].offset), &word, sizeof word) ||
             word != s[i].word) return 0;
     }
