@@ -1,12 +1,11 @@
-# BTPhonoSink v7.7 — experimental AVDTP Sink SEP capacity trial
+# BTPhonoSink v7.8 — read-only AVDTP endpoint capacity audit
 
-**A2DP Sink is not functional yet.** This build preserves v7.6.1's verified prerecorded-SBC → daemon IPC → helper decode/playback tests, and adds a **separately gated, OFF-BY-DEFAULT, one-shot** AVDTP Sink SEP registration test. This is an invasive private-stack experiment and may disrupt Bluetooth if enabled. Follow [TESTING-v7.7.md](TESTING-v7.7.md) and keep the known-working v7.6.1 `.deb` for rollback.
+The iPhone's v7.7 extra A2DP Sink SEP request returned **0x68** and SEID **0** after all six Source SEPs succeeded. Disassembly of the exact device `bluetoothd` at image+`0xCECF0` shows that `0x68` is the default return when the routine exhausts its candidate-SEID/slot search without finding a free slot.
 
-- Default: 5 passive hook observers and six normal Apple Source endpoints, **no additional registration**.
-- Legacy Sink remains **inactive**, even if its old preference is ON. The separate "Trial extra Sink endpoint (advanced)" switch requires Legacy Sink OFF.
-- When that switch is ON *before restarting bluetoothd*, after six successful native Source registrations this build prepares private SBC capabilities copied into permanent, distinct storage, and calls the original AVDTP registration trampoline **once** with `TSEP=Sink`, a fresh one-byte SEID output and `count=1`. It logs the raw return code and assigned SEID without interpreting private status semantics as definitive success.
-- The trial cannot run unless the exact analyzed `bluetoothd` UUID is present, every baseline trampoline was installed, no Source registration failed, stable SBC capabilities were captured, and the switch was enabled at daemon startup.
-- No SDP Audio Sink UUID `0x110B` is advertised. No live AVDTP media input/negotiation to helper is connected. The Windows laptop won't see a functional Bluetooth speaker from this update.
-- Existing `--sbc-play` and other helper modes are unchanged; no third-party decoder files are added to the upload. GitHub Actions still fetches pinned libsbc before the iOS build.
+**v7.8 is passive.** It DISABLES the v7.7 one-shot Sink registration even if the old switch is stored as ON. Following successful registration of Apple's six normal Sources, it safely reads the private table pointer, count, SEID cursor, and up to 32 endpoint records, and logs occupancy (0x28-byte stride, nonzero byte at +0x19). It does not change the table, add endpoints or SDP services, receive live media, or affect the proven PCM/SBC helper pipeline.
 
-This experiment is intended to measure whether a seventh SEP can be registered **without preempting Apple's native six Sources**, a question the earlier v4 injection experiments couldn't safely answer. If the native table is full, a nonzero return is likely; keep the exact code rather than guessing at its meaning.
+The read is gated on the exact binary UUID, and six hardcoded instruction-word signatures must match the **same** binary. An unexpected pointer, large table, or unreadable page aborts the snapshot without a crash. Unsupported firmware produces an `UNAVAILABLE` status.
+
+[Disassembly and reason for 0x68](docs/V78_AVDTP_CAPACITY_FINDINGS.md) | [Testing procedure](TESTING-v7.8.md).
+
+**Workarounds under investigation, not yet implemented:** separate/sidecar AVDTP service outside Apple's fixed endpoint array (requires private controller access); deliberate reduction of redundant native Source registrations (would sacrifice native profiles and is risky); changing Apple stack allocation and count (requires understanding allocation, owners, lifetimes and all usages, not just patching a counter). We will not write past the current allocation.

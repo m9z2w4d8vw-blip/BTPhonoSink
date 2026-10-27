@@ -2,41 +2,39 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>title</key>
-	<string>BTPhonoSink</string>
 	<key>items</key>
 	<array>
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>Status</string>
 			<key>footerText</key>
 			<string>Read from the tweak running inside the Bluetooth daemon. "No data yet" means the tweak has not written anything: it is not loaded, or the daemon's sandbox blocks every log channel.</string>
+			<key>label</key>
+			<string>Status</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSTitleValueCell</string>
-			<key>label</key>
-			<string>Loaded in daemon</string>
 			<key>get</key>
 			<string>loadedValue:</string>
+			<key>label</key>
+			<string>Loaded in daemon</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSTitleValueCell</string>
-			<key>label</key>
-			<string>Last event</string>
 			<key>get</key>
 			<string>lastEventValue:</string>
+			<key>label</key>
+			<string>Last event</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSTitleValueCell</string>
-			<key>label</key>
-			<string>Log channels</string>
 			<key>get</key>
 			<string>channelValue:</string>
+			<key>label</key>
+			<string>Log channels</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -45,74 +43,71 @@
 			<string>Debug log</string>
 		</dict>
 		<dict>
+			<key>action</key>
+			<string>showLog:</string>
 			<key>cell</key>
 			<string>PSButtonCell</string>
 			<key>label</key>
 			<string>View debug log</string>
-			<key>action</key>
-			<string>showLog:</string>
 		</dict>
 		<dict>
+			<key>action</key>
+			<string>copyLog:</string>
 			<key>cell</key>
 			<string>PSButtonCell</string>
 			<key>label</key>
 			<string>Copy log to clipboard</string>
-			<key>action</key>
-			<string>copyLog:</string>
 		</dict>
 		<dict>
+			<key>action</key>
+			<string>clearLog:</string>
 			<key>cell</key>
 			<string>PSButtonCell</string>
 			<key>label</key>
 			<string>Clear log</string>
-			<key>action</key>
-			<string>clearLog:</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>The v7.7 Sink trial returned 0x68 and is retired. v7.8 only reads endpoint occupancy. Legacy Sink is inactive. Live reception and SDP 0x110B are not implemented.</string>
 			<key>label</key>
 			<string>Experiments</string>
-			<key>footerText</key>
-			<string>Legacy Sink is disabled in all versions. The separate opt-in v7.7 trial below is a new one-shot capacity experiment; leave BOTH OFF during initial tests. Leave it OFF. The app traces capability codecs, assigned SEIDs, private callback returns and timing, plus a session checklist. A2DP Sink SDP advertisement (0x110B) and incoming Bluetooth playback are NOT implemented.</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
-			<key>label</key>
-			<string>Legacy sink experiment flag (inactive)</string>
+			<key>default</key>
+			<false/>
 			<key>defaults</key>
 			<string>com.apple.bluetooth</string>
 			<key>key</key>
 			<string>BTPhonoSinkExperiments</string>
-			<key>default</key>
-			<false/>
+			<key>label</key>
+			<string>Legacy sink experiment flag (inactive)</string>
 		</dict>
 		<dict>
-			<key>cell</key><string>PSGroupCell</string>
-			<key>label</key><string>Optional SDP registration diagnostics</string>
+			<key>cell</key>
+			<string>PSGroupCell</string>
 			<key>footerText</key>
 			<string>OFF by default. When ON, the next bluetoothd launch adds an experimental read-only observer for existing SDP record additions. It never adds Sink services or endpoints. Restart bluetoothd once after changing. Switch OFF and restart if instability occurs.</string>
+			<key>label</key>
+			<string>Optional SDP registration diagnostics</string>
 		</dict>
 		<dict>
-			<key>cell</key><string>PSSwitchCell</string>
-			<key>label</key><string>Trace existing SDP records (advanced)</string>
-			<key>defaults</key><string>com.apple.bluetooth</string>
-			<key>key</key><string>BTPhonoSinkSDPProbe</string>
-			<key>default</key><false/>
-		</dict>
-		<dict>
-			<key>cell</key><string>PSGroupCell</string>
-			<key>label</key><string>v7.7 Sink capacity experiment</string>
-			<key>footerText</key><string>HIGH RISK; OFF by default. Only after normal headphone testing: ON makes one additional private AVDTP Sink SEP registration attempt AFTER all six native Sources register successfully. A restart of bluetoothd is required. No Audio Sink SDP 0x110B is published and Windows cannot send audio yet. Possible Bluetooth instability: switch OFF and restart or restore v7.6.1.</string>
-		</dict>
-		<dict>
-			<key>cell</key><string>PSSwitchCell</string>
-			<key>label</key><string>Trial extra Sink endpoint (advanced)</string>
-			<key>defaults</key><string>com.apple.bluetooth</string>
-			<key>key</key><string>BTPhonoSinkV77SinkTrial</string>
-			<key>default</key><false/>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>com.apple.bluetooth</string>
+			<key>key</key>
+			<string>BTPhonoSinkSDPProbe</string>
+			<key>label</key>
+			<string>Trace existing SDP records (advanced)</string>
 		</dict>
 	</array>
+	<key>title</key>
+	<string>BTPhonoSink</string>
 </dict>
 </plist>

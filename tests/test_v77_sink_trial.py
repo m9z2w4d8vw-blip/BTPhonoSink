@@ -41,25 +41,16 @@ class V77Safety(unittest.TestCase):
         codec=(ctypes.c_uint8*4)(0x3f,0x15,0x02,0x35)
         result=SinkCaps()
         self.assertNotEqual(self.func(ctypes.byref(result),src,codec),0)
-    def test_switch_off_by_default_and_distinct_from_legacy(self):
+    def test_v77_trial_retired_from_settings(self):
         pl=plistlib.loads((ROOT/'btphonosinkprefs/Resources/Root.plist').read_bytes())
-        opts=[x for x in pl['items'] if x.get('key')=='BTPhonoSinkV77SinkTrial']
-        self.assertEqual(len(opts),1);self.assertIs(opts[0]['default'],False)
-        self.assertNotEqual(opts[0]['key'],'BTPhonoSinkExperiments')
-    def test_register_once_only_after_native_sources_and_with_separate_byte(self):
+        self.assertFalse(any(x.get('key')=='BTPhonoSinkV77SinkTrial' for x in pl['items']))
+    def test_v77_mutation_disabled_after_error_0x68(self):
         src=(ROOT/'Tweak.xm').read_text()
-        self.assertIn('if (sources == 6u)',src)
-        self.assertIn('btps_v77_attempt_after_sources();',src)
-        self.assertIn('__sync_bool_compare_and_swap(&g_v77_attempted, 0u, 1u)',src)
-        self.assertIn('g_native_source_success != 6u',src)
-        self.assertIn('&g_v77_caps.assigned_seid',src)
-        self.assertIn('g_v77_caps.caps_words',src)
-        self.assertIn('BTPS_AVDTP_TSEP_SNK',src)
-        self.assertIn('if (g_v77_requested && uuid_ok && !legacy_on)',src)
-        self.assertNotIn('OI_SDPDB_AddServiceRecord(',src)
-    def test_build_and_logger_have_trial(self):
-        self.assertIn('BTPSV77Sink.c',(ROOT/'Makefile').read_text())
-        self.assertIn('diag.v77_sink_trial',(ROOT/'btphonosinkprefs/BTPSLogReader.m').read_text())
-        self.assertIn('v7.7-sink-capacity-trial',(ROOT/'Tweak.xm').read_text())
+        self.assertNotIn('btps_v77_attempt_after_sources(',src)
+        self.assertNotIn('btps_v77_attempt_after_sources();',src)
+        self.assertIn('btps_v78_snapshot_capacity();',src)
+    def test_v78_capacity_logger_is_in_build(self):
+        self.assertIn('BTPSV78Capacity.c',(ROOT/'Makefile').read_text())
+        self.assertIn('diag.v78_table',(ROOT/'Tweak.xm').read_text())
 
 if __name__=='__main__':unittest.main()
