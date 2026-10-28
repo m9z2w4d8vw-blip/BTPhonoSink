@@ -74,7 +74,7 @@
 #include "BTPSV77Sink.h"
 #include "BTPSV82SDP.h"
 
-#define BTPS_BUILD_TAG "v8.6-live-media-cid-counter"
+#define BTPS_BUILD_TAG "v8.7-raw-media-entry-counter"
 
 /* AVDTP constants, used for native Source registration diagnostics */
 #define BTPS_AVDTP_TSEP_SRC 0u
@@ -272,15 +272,21 @@ static btps_fn_t g_v82_tx_orig = NULL;
 static volatile unsigned g_v82_tx_calls = 0;
 static volatile unsigned g_v82_tx_hook_ok = 0;
 
-/* v8.6: one-shot media ingress diagnostics.  No IPC, decoding, or changes
- * to the native callback table.  Correlation requires a START ACCEPT for
- * the experimental Sink SEID 7 on the same signaling CID/transaction. */
-static btps_fn_t g_v86_media_orig = NULL;
-static volatile unsigned g_v86_media_hook_ok = 0;
-static volatile unsigned g_v86_media_handler_calls = 0;
-static volatile unsigned g_v86_media_valid_packets = 0;
-static volatile unsigned g_v86_media_uncorrelated = 0;
-static volatile unsigned long long g_v86_media_bytes = 0;
+/* v8.7: one-shot raw media-entry argument counter only.  No channel
+ * structures, packet pointers, RTP parsing, or media forwarding. */
+static btps_fn_t g_v87_media_orig = NULL;
+static volatile unsigned g_v87_media_hook_ok = 0;
+static volatile unsigned g_v87_media_calls = 0;
+static volatile unsigned long long g_v87_media_bytes = 0;
+
+typedef struct {
+    volatile unsigned sequence;   /* published last, with release ordering */
+    volatile unsigned cid;        /* raw w0 from L2CAP media-handler entry */
+    volatile unsigned bytes;      /* raw w2 from handler entry */
+} BTPSV87MediaHistory;
+static BTPSV87MediaHistory g_v87_media_recent[8];
+
+/* Existing v8.5 TX/RX signaling correlation remains unchanged. */
 static volatile unsigned g_v86_start_pending = 0;
 static volatile unsigned g_v86_start_label = 0;
 static volatile uint64_t g_v86_start_sig_cid = 0;
@@ -796,126 +802,81 @@ static void btps_v82_install_tx(uintptr_t base, int uuid_ok)
     BTPSLogNow("V82 TX hook installed at image+0xDA414 (encoded AVDTP signaling queue; pass-through)");
 }
 
-/* v8.6 media handler: the actual native L2CAP media indication receives
- * (w0=CID, x1=raw RTP packet, w2=packet length).  Its valid-media branch
- * looks up CID with +0xD917C, requires entry+0x86==4 and entry+0x84!=0,
- * then calculates callback x3=packet+12+(packet[0]&15) and
- * w4=(len-(12+(packet[0]&15)))&0xffff before braaz at +0xD8FA4.
- * We observe precisely those prerequisites BEFORE calling the native handler.
- * DO NOT hook the one-instruction RET stub at +0x385DFC: patching it risks
- * overwriting adjacent functions.  No media forwarding in v8.6. */
-#define BTPS_V86_MEDIA_HANDLER 0x000d8cf8ul
-#define BTPS_V86_CID_LOOKUP    0x000d917cul
-#define BTPS_V86_MEDIA_STUB    0x00385dfcul
-static const uint32_t BTPS_V86_MEDIA_SIG[4] = {
+/* v8.7: exact verified native L2CAP media-data indication at image+0xD8CF8.
+ * ABI: w0=local CID, x1=packet pointer, w2=raw packet length.
+ * CRITICAL: do not dereference x1, perform the CID lookup at +0xD917C,
+ * read ANY channel structure, or patch Apple's one-instruction media stub.
+ * Counter counts raw handler-entry packet lengths, NOT parsed SBC bytes.
+ * Logging is sampled to avoid overloading the Bluetooth receive thread. */
+#define BTPS_V87_MEDIA_HANDLER 0x000d8cf8ul
+static const uint32_t BTPS_V87_MEDIA_SIG[4] = {
     0xd503237fu, 0xd10203ffu, 0xa90367fau, 0xa9045ff8u
 };
-static const uint32_t BTPS_V86_LOOKUP_SIG[4] = {
-    0xb00044e8u, 0xf9445908u, 0xb4000248u, 0x39418509u
-};
-typedef uint64_t (*btps_v86_lookup_fn_t)(uint64_t);
-static btps_v86_lookup_fn_t g_v86_cid_lookup = NULL;
 
-static uint64_t btps_v86_receive_media(uint64_t cid, uint64_t packet,
+static uint64_t btps_v87_receive_media(uint64_t cid, uint64_t packet,
     uint64_t length, uint64_t a3, uint64_t a4, uint64_t a5,
     uint64_t a6, uint64_t a7)
 {
-    unsigned calls = __sync_add_and_fetch(&g_v86_media_handler_calls, 1u);
-    uint16_t entry_cid = 0;
-    uint8_t state = 0, gate = 0, marker = 0xff, first = 0;
-    uint64_t entry = g_v86_cid_lookup ? g_v86_cid_lookup(cid) : 0;
-    uint8_t channel_fields[9] = {0};
-    int channel_ok = entry &&
-        btps_peek(entry + 0x80u, channel_fields, sizeof channel_fields);
-    if (channel_ok) {
-        memcpy(&entry_cid, channel_fields, sizeof entry_cid);
-        gate = channel_fields[4];
-        state = channel_fields[6];
-        marker = channel_fields[8];
-        channel_ok = entry_cid == (uint16_t)cid && marker != 0xffu;
+    /* No pointer access or native helper calls before forwarding.  These
+     * unsigned 32-bit values are the incoming raw w0 / w2 registers. */
+    const unsigned raw_cid = (unsigned)(uint32_t)cid;
+    const unsigned raw_bytes = (unsigned)(uint32_t)length;
+    const unsigned calls = __sync_add_and_fetch(&g_v87_media_calls, 1u);
+    BTPSV87MediaHistory *record = &g_v87_media_recent[(calls - 1u) & 7u];
+    __atomic_store_n(&record->cid, raw_cid, __ATOMIC_RELAXED);
+    __atomic_store_n(&record->bytes, raw_bytes, __ATOMIC_RELAXED);
+    __atomic_store_n(&record->sequence, calls, __ATOMIC_RELEASE);
+
+    const int sampled = calls <= 8u || (calls % 64u) == 0u;
+    /* A pre-native breadcrumb distinguishes a crash in the original handler
+     * from a crash before this callback ever runs.  No buffer dereferences. */
+    if (sampled) {
+        BTPSLogNow("V87_MEDIA_ENTER #%u cid=%#x bytes=%u sink_start=%u sig_cid=%#llx",
+                   calls, raw_cid, raw_bytes,
+                   (unsigned)g_v86_sink_stream_started,
+                   (unsigned long long)g_v86_sink_sig_cid);
     }
 
-    /* Refuse to label an arbitrary L2CAP CID as Sink media.  Require the
-     * accepted SEID7 START on the recorded signaling CID, plus a distinct
-     * local CID, the native state/gate, and the branch's RTP length rule. */
-    int eligible = channel_ok && state == 4u && gate &&
-        g_v82_sink_accepted && g_v86_sink_stream_started &&
-        cid != g_v86_sink_sig_cid && packet && length > 12u && length <= 65535u;
-    if (eligible && btps_peek(packet, &first, sizeof first)) {
-        uint64_t payload_offset = 12u + (uint64_t)(first & 0x0fu);
-        uint64_t payload_length = length > payload_offset ? length - payload_offset : 0u;
-        uint8_t prefix[4] = {0};
-        if (payload_length >= sizeof prefix && payload_length <= 65535u &&
-            btps_peek(packet + payload_offset, prefix, sizeof prefix)) {
-            uint64_t known_cid = g_v86_sink_media_cid;
-            if (!known_cid) {
-                (void)__sync_bool_compare_and_swap(&g_v86_sink_media_cid, 0ull, cid);
-                known_cid = g_v86_sink_media_cid;
-                BTPSLogNow("V86 MEDIA_CID_CANDIDATE cid=%#llx signaling_cid=%#llx state=%u gate=%u; only Sink stream should be active",
-                           (unsigned long long)cid, (unsigned long long)g_v86_sink_sig_cid,
-                           (unsigned)state, (unsigned)gate);
-            }
-            if (known_cid == cid) {
-                unsigned packets = __sync_add_and_fetch(&g_v86_media_valid_packets, 1u);
-                unsigned long long total = __sync_add_and_fetch(&g_v86_media_bytes,
-                    (unsigned long long)payload_length);
-                if (packets <= 8u || (packets % 64u) == 0u) {
-                    BTPSLogNow("V86 MEDIA_RX #%u cid=%#llx entry_cid=%#x state=%u gate=%u rtp_len=%llu payload_len=%llu first4=%02x %02x %02x %02x MEDIA_BYTES_RECEIVED=%llu",
-                        packets, (unsigned long long)cid, (unsigned)entry_cid,
-                        (unsigned)state, (unsigned)gate,
-                        (unsigned long long)length, (unsigned long long)payload_length,
-                        prefix[0], prefix[1], prefix[2], prefix[3], total);
-                    BTPSSetStatus("diag.v86.media", "MEDIA_BYTES_RECEIVED=%llu cid=%#llx packets=%u handler_calls=%u; Sink correlation candidate (not air-capture proof)",
-                        total, (unsigned long long)cid, packets, calls);
-                }
-            } else if (calls <= 8u) {
-                BTPSLogNow("V86 OTHER_MEDIA_CID cid=%#llx primary_candidate=%#llx ignored",
-                    (unsigned long long)cid, (unsigned long long)known_cid);
-            }
-        }
-    } else if (calls <= 8u) {
-        unsigned n = __sync_add_and_fetch(&g_v86_media_uncorrelated, 1u);
-        BTPSLogNow("V86 MEDIA_HANDLER #%u cid=%#llx entry=%#llx mapped=%d entry_cid=%#x state=%u gate=%u len=%llu sink_start=%u unmatched=%u (not counted)",
-            calls, (unsigned long long)cid, (unsigned long long)entry,
-            channel_ok, (unsigned)entry_cid, (unsigned)state, (unsigned)gate,
-            (unsigned long long)length, (unsigned)g_v86_sink_stream_started, n);
-    }
-    /* Forward every original argument exactly once; observe only. */
-    return g_v86_media_orig
-        ? g_v86_media_orig(cid, packet, length, a3, a4, a5, a6, a7)
+    /* Call Apple's original function exactly once, without changing any
+     * argument value or altering the result. */
+    const uint64_t result = g_v87_media_orig
+        ? g_v87_media_orig(cid, packet, length, a3, a4, a5, a6, a7)
         : 0xffffffffffffffffull;
+
+    const unsigned long long total = __sync_add_and_fetch(
+        &g_v87_media_bytes, (unsigned long long)raw_bytes);
+    if (sampled) {
+        BTPSLogNow("V87_MEDIA_RX cid=%#x bytes=%u total=%llu calls=%u ret=%#llx sink_start=%u (raw handler bytes, Sink CID not proven)",
+                   raw_cid, raw_bytes, total, calls,
+                   (unsigned long long)result, (unsigned)g_v86_sink_stream_started);
+        BTPSSetStatus("diag.v86.media", "V87_MEDIA_CALLS=%u V87_MEDIA_BYTES_RECEIVED_RAW=%llu last_cid=%#x last_len=%u; no Sink CID correlation yet",
+                      calls, total, raw_cid, raw_bytes);
+    }
+    return result;
 }
 
-static void btps_v86_install_media(uintptr_t base, int uuid_ok)
+static void btps_v87_install_media(uintptr_t base, int uuid_ok)
 {
     if (!g_v82_armed || !uuid_ok || !g_v82_signal_hook_ok || !g_v82_tx_hook_ok) return;
-    uint32_t handler[4] = {0}, lookup[4] = {0}, noop = 0;
-    if (!btps_peek(base + BTPS_V86_MEDIA_HANDLER, handler, sizeof handler) ||
-        memcmp(handler, BTPS_V86_MEDIA_SIG, sizeof handler) != 0 ||
-        !btps_peek(base + BTPS_V86_CID_LOOKUP, lookup, sizeof lookup) ||
-        memcmp(lookup, BTPS_V86_LOOKUP_SIG, sizeof lookup) != 0 ||
-        !btps_peek(base + BTPS_V86_MEDIA_STUB, &noop, sizeof noop) ||
-        noop != 0xd65f03c0u) {
-        BTPSLogNow("V86 MEDIA REFUSED: exact handler/CID lookup/no-op stub signature mismatch");
-        BTPSSetStatus("diag.v86.media", "REFUSED: exact bluetoothd media signatures differ");
+    uint32_t handler[4] = {0};
+    if (!btps_peek(base + BTPS_V87_MEDIA_HANDLER, handler, sizeof handler) ||
+        memcmp(handler, BTPS_V87_MEDIA_SIG, sizeof handler) != 0) {
+        BTPSLogNow("V87_MEDIA_REFUSED exact handler instruction signature mismatch");
+        BTPSSetStatus("diag.v86.media", "V87 REFUSED: exact bluetoothd media-handler signature differs");
         return;
     }
-    /* The CID lookup has no side effects in the verified binary: it returns
-     * the matching 0x90-byte channel entry or NULL. */
-    g_v86_cid_lookup = (btps_v86_lookup_fn_t)(base + BTPS_V86_CID_LOOKUP);
     void *trampoline = NULL;
-    MSHookFunction((void *)(base + BTPS_V86_MEDIA_HANDLER),
-                   (void *)btps_v86_receive_media, &trampoline);
+    MSHookFunction((void *)(base + BTPS_V87_MEDIA_HANDLER),
+                   (void *)btps_v87_receive_media, &trampoline);
     if (!trampoline) {
-        g_v86_cid_lookup = NULL;
-        BTPSLogNow("V86 MEDIA FAILED: missing trampoline");
-        BTPSSetStatus("diag.v86.media", "FAILED: no media handler trampoline");
+        BTPSLogNow("V87_MEDIA_FAILED: missing trampoline");
+        BTPSSetStatus("diag.v86.media", "V87 FAILED: no media-handler trampoline");
         return;
     }
-    g_v86_media_orig = (btps_fn_t)trampoline;
-    g_v86_media_hook_ok = 1u;
-    BTPSSetStatus("diag.v86.media", "ARMED: MEDIA_BYTES_RECEIVED=0; waiting for accepted Sink START and media CID");
-    BTPSLogNow("V86 MEDIA hook installed at image+0xD8CF8; CID lookup +0xD917C verified; media stub +0x385DFC untouched");
+    g_v87_media_orig = (btps_fn_t)trampoline;
+    g_v87_media_hook_ok = 1u;
+    BTPSSetStatus("diag.v86.media", "V87 ARMED: raw handler-entry bytes=0; waiting for Windows START/media");
+    BTPSLogNow("V87 MEDIA hook installed at image+0xD8CF8; raw w0/w2 ring[8], no channel reads or packet dereferences");
 }
 
 /* v8.3 one-shot: swap higher-level audio context AFTER the native Source
@@ -927,7 +888,7 @@ static void btps_v83_attempt_post_source(uint64_t audio_context)
     if (!g_v82_armed || !g_v81_shadow_returned || !g_v82_caps_ready ||
         !g_v83_source_reg_hook_ok || !g_orig[BTPS_H_REGISTER] ||
         !g_v82_signal_hook_ok || !g_v82_sdp_hook_ok || !g_v82_tx_hook_ok ||
-        !g_v86_media_hook_ok ||
+        !g_v87_media_hook_ok ||
         !g_sdp_orig || g_native_source_success != 6 ||
         !__sync_bool_compare_and_swap(&g_v82_sink_attempted, 0, 1)) return;
     uint64_t avdtp_context = 0;
@@ -1538,7 +1499,7 @@ static void install_hooks(uintptr_t base, int uuid_ok)
     BTPSSetStatus("diag.v82.sdp", "NOT published");
     BTPSSetStatus("diag.v82.rx", "NOT hooked");
     BTPSSetStatus("diag.v82.media", "UNOBSERVED: media callback not hooked; no PASS possible in this build");
-    BTPSSetStatus("diag.v86.media", "OFF: one-shot media CID observer not armed");
+    BTPSSetStatus("diag.v86.media", "V87 OFF: raw media entry counter not armed");
     BTPSSetStatus("diag.v82.tx", "OFF: experimental TX hook not armed");
     BTPSSetStatus("diag.session_id", "%ld-%d", (long)time(NULL), (int)getpid());
     BTPSLogNow("SESSION start pid=%d optional one-shot 7-slot initializer config, OFF by default; no Sink registration", (int)getpid());
@@ -1580,7 +1541,7 @@ static void install_hooks(uintptr_t base, int uuid_ok)
     btps_v80_install_config_observer((uintptr_t)mh, uuid_ok);
     btps_v82_install_rx((uintptr_t)mh, uuid_ok);
     btps_v82_install_tx((uintptr_t)mh, uuid_ok);
-    btps_v86_install_media((uintptr_t)mh, uuid_ok);
+    btps_v87_install_media((uintptr_t)mh, uuid_ok);
     install_optional_sdp_probe((uintptr_t)mh, uuid_ok);
     btps_v83_install_native_registration((uintptr_t)mh, uuid_ok);
     /* Explicit user request only; no sockets or audio on Bluetooth callback threads. */
