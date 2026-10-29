@@ -64,6 +64,7 @@ int main(void) {
     assert(enqueues==0 && o.count==3 && o.render_callbacks==0 && data[0]==42);
     o.stopping=0;render(&o,&o,&buffer);
     assert(enqueues==1 && o.count==0 && o.read==2);
+    assert(o.render_tick==3);
     assert(memcmp(data,expected,sizeof expected)==0);
     for(unsigned i=6;i<AUDIO_FRAMES*2;i++) assert(data[i]==0);
     assert(o.render_callbacks==1 && o.submitted_frames==3 && o.submitted_nonzero==4);
@@ -77,6 +78,7 @@ int main(void) {
     assert(pthread_mutex_unlock(&o.lock)==0);
     assert(enqueues==1 && o.count==2 && o.read==0);
     assert(o.submitted_frames==0 && o.submitted_nonzero==0 && o.silence_frames==AUDIO_FRAMES);
+    assert(o.render_tick==0);
     for(unsigned i=0;i<AUDIO_FRAMES*2;i++) assert(data[i]==0);
     pthread_mutex_destroy(&o.lock);
 
@@ -85,10 +87,12 @@ int main(void) {
     init_output(&o);enqueue_error=-66632;
     render(&o,&o,&buffer);
     assert(enqueues==1 && o.error==-66632 && o.silence_frames==0);
+    assert(o.render_tick==0);
     pthread_mutex_destroy(&o.lock);
     init_output(&o);enqueue_error=-66632;stop_on_enqueue=1;
     render(&o,&o,&buffer);
     assert(enqueues==1 && o.stopping==1 && o.error==0 && o.silence_frames==0);
+    assert(o.render_tick==0);
     render(&o,&o,&buffer);assert(enqueues==1);
     pthread_mutex_destroy(&o.lock);
 

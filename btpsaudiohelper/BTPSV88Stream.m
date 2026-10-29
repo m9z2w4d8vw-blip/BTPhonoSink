@@ -27,6 +27,7 @@ typedef struct {
     int32_t error, stopping;
     uint64_t dropped;
     uint64_t render_callbacks, submitted_frames, submitted_nonzero, silence_frames;
+    uint64_t render_tick; /* cumulative enqueued PCM frames; never reset by logs */
     AudioQueueRef queue;
 } Output;
 
@@ -57,14 +58,21 @@ static void render(void *context,AudioQueueRef queue,AudioQueueBufferRef buffer)
         if(!__atomic_load_n(&o->stopping,__ATOMIC_ACQUIRE))
             __atomic_store_n(&o->error,e,__ATOMIC_RELAXED);
     } else {
+        __atomic_fetch_add(&o->render_tick,take,__ATOMIC_RELAXED);
         __atomic_fetch_add(&o->submitted_frames,take,__ATOMIC_RELAXED);
         __atomic_fetch_add(&o->submitted_nonzero,nonzero,__ATOMIC_RELAXED);
         __atomic_fetch_add(&o->silence_frames,AUDIO_FRAMES-take,__ATOMIC_RELAXED);
     }
 }
-static void stop_output(Output *o,BTPSV88Shared *s) {
+static void stop_output(Output *o,BTPSV88Shared *s,const char *reason) {
     __atomic_store_n(&o->stopping,1,__ATOMIC_RELEASE);
     if(!o->queue) return;
+    uint64_t current_generation=__atomic_load_n(&s->generation,__ATOMIC_ACQUIRE);
+    fprintf(stdout,"V882_AUDIO_STOP reason=%s generation=%llu active=%u\n",reason,
+        (unsigned long long)(current_generation>>1),(unsigned)(current_generation&1u));fflush(stdout);
+    btps_v88_event(s,1,(BTPSV88Event){BTPS_V882_HEALTH,
+        (uint32_t)current_generation,
+        (uint32_t)__atomic_load_n(&o->render_tick,__ATOMIC_RELAXED),0});
     AudioQueueStop(o->queue,true);
     AudioQueueDispose(o->queue,true);o->queue=NULL;o->rate=0;
     __atomic_store_n(&o->error,0,__ATOMIC_RELAXED);
@@ -140,7 +148,7 @@ static int start_output(Output *o,unsigned rate,BTPSV88Shared *s) {
         e=AudioQueueStart(o->queue,NULL);
     }
     btps_v88_event(s,1,(BTPSV88Event){BTPS_V88_AUDIO,0,rate,e});
-    if(e) {stop_output(o,s);[session setActive:NO error:NULL];return -1;}
+    if(e) {stop_output(o,s,"start_error");[session setActive:NO error:NULL];return -1;}
     o->rate=rate;
     log_route(session,"started",rate,s);return 0;
 }
@@ -182,6 +190,16 @@ static void write_pcm(Output *o,const int16_t *pcm,unsigned frames) {
         o->pcm[slot*2]=pcm[i*2];o->pcm[slot*2+1]=pcm[i*2+1];
     }
     o->count+=frames;pthread_mutex_unlock(&o->lock);
+}
+static void report_health(Output *o,BTPSV88Shared *s,uint64_t generation) {
+    UInt32 running=0,size=sizeof running;
+    OSStatus status=o->queue?AudioQueueGetProperty(o->queue,kAudioQueueProperty_IsRunning,&running,&size):-1;
+    int playing=(generation&1u) && !status && running &&
+        !__atomic_load_n(&o->stopping,__ATOMIC_ACQUIRE) &&
+        !__atomic_load_n(&o->error,__ATOMIC_RELAXED) &&
+        speaker_selected([AVAudioSession sharedInstance]);
+    btps_v88_event(s,1,(BTPSV88Event){BTPS_V882_HEALTH,(uint32_t)generation,
+        (uint32_t)__atomic_load_n(&o->render_tick,__ATOMIC_RELAXED),playing?1:0});
 }
 static int read_exact(int fd,void *dst,size_t size) {
     uint8_t *p=dst;
@@ -242,22 +260,26 @@ static void stream(int fd) {
             if(n==0 || (n<0 && errno!=EAGAIN && errno!=EWOULDBLOCK && errno!=EINTR)) break;
             __atomic_fetch_add(&s->helper_heartbeat,1,__ATOMIC_RELEASE);
             int changed=__atomic_exchange_n(&interruption,0,__ATOMIC_ACQUIRE);
-            if(changed) {interrupted=changed==1;stop_output(o,s);btps_v88_decoder_reset(&decoder);}
+            if(changed) {
+                interrupted=changed==1;
+                fprintf(stdout,"V882_INTERRUPTION type=%s\n",interrupted?"began":"ended");fflush(stdout);
+                stop_output(o,s,interrupted?"interruption_began":"interruption_ended");btps_v88_decoder_reset(&decoder);
+            }
             if(__atomic_exchange_n(&route_changed,0,__ATOMIC_ACQUIRE) && o->queue) {
                 AVAudioSession *session=[AVAudioSession sharedInstance];
                 log_route(session,"changed",o->rate,s);
                 if(!speaker_selected(session)) {
-                    stop_output(o,s);btps_v88_decoder_reset(&decoder);retry=20;
+                    stop_output(o,s,"route_changed");btps_v88_decoder_reset(&decoder);retry=20;
                 }
             }
             uint64_t current=__atomic_load_n(&s->generation,__ATOMIC_ACQUIRE);
             if(current!=generation) {
-                stop_output(o,s);btps_v88_decoder_reset(&decoder);generation=current;retry=0;
+                stop_output(o,s,"stream_generation_changed");btps_v88_decoder_reset(&decoder);generation=current;retry=0;
             }
             int32_t audio_error=__atomic_exchange_n(&o->error,0,__ATOMIC_RELAXED);
             if(audio_error) {
                 btps_v88_event(s,1,(BTPSV88Event){BTPS_V88_AUDIO,0,o->rate,audio_error});
-                stop_output(o,s);retry=100;
+                stop_output(o,s,"enqueue_error");retry=100;
             }
             if(retry) retry--;
             unsigned processed=0;
@@ -273,7 +295,7 @@ static void stream(int fd) {
                     measure_pcm(&level,pcm,samples);
                     /* Recheck after decoding so a concurrent STOP cannot queue stale PCM. */
                     if(__atomic_load_n(&s->generation,__ATOMIC_ACQUIRE)!=generation) break;
-                    if(o->queue && o->rate!=rate) stop_output(o,s);
+                    if(o->queue && o->rate!=rate) stop_output(o,s,"sample_rate_changed");
                     if(!o->queue && !retry && start_output(o,rate,s)) retry=100;
                     if(o->queue) write_pcm(o,pcm,samples);
                 }
@@ -282,19 +304,21 @@ static void stream(int fd) {
                    __atomic_load_n(&s->media.write,__ATOMIC_ACQUIRE)) doorbell=signal;
             }
             idle=processed?0:idle+1;
-            if(idle==400) {stop_output(o,s);btps_v88_decoder_reset(&decoder);}
-            if(++diagnostic_ticks%200u==0 && ((generation&1u) || level.samples))
+            if(idle==400) {stop_output(o,s,"media_idle");btps_v88_decoder_reset(&decoder);}
+            diagnostic_ticks++;
+            if(diagnostic_ticks%40u==0) report_health(o,s,generation);
+            if(diagnostic_ticks%200u==0 && ((generation&1u) || level.samples))
                 report_progress(o,&level,s);
         }
         usleep(5000); /* shared-memory doorbell polling, <=5ms nominal wake latency */
     }
     [[NSNotificationCenter defaultCenter] removeObserver:observer];
     [[NSNotificationCenter defaultCenter] removeObserver:route_observer];
-    stop_output(o,s);pthread_mutex_destroy(&o->lock);free(o);
+    stop_output(o,s,"ipc_closed");pthread_mutex_destroy(&o->lock);free(o);
     munmap(s,sizeof *s);close(file);
 }
 int BTPSV88StreamMain(void) {
-    fprintf(stdout,"V881_HELPER build=v8.8.1-speaker-route output=built_in_speaker\n");fflush(stdout);
+    fprintf(stdout,"V882_HELPER build=v8.8.2-idle-guard output=built_in_speaker\n");fflush(stdout);
     int (*activate)(const char *,int **,size_t *)=dlsym(RTLD_DEFAULT,"launch_activate_socket");
     int *fds=NULL;size_t count=0;
     if(!activate || activate("Stream",&fds,&count) || !count) {

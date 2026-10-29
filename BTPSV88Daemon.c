@@ -1,6 +1,7 @@
 /* Only this worker performs IPC/logging. Never called from the media thread. */
 #include "BTPSV88Daemon.h"
 #include "BTPSV88Shared.h"
+#include "BTPSV882Health.h"
 #include "BTPSDaemonProbe.h"
 #include "BTPSLog.h"
 #include <errno.h>
@@ -12,14 +13,32 @@
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 static BTPSV88Shared *g_shared;
 static BTPSV88Hello g_hello;
+static uint64_t g_health_generation,g_health_deadline_ms;
+static uint64_t monotonic_ms(void) {
+    struct timespec ts;
+    if(clock_gettime(CLOCK_MONOTONIC,&ts)) return 0;
+    return (uint64_t)ts.tv_sec*1000u+(uint64_t)ts.tv_nsec/1000000u;
+}
+int BTPSV882SinkHealthy(void) {
+    BTPSV88Shared *s=__atomic_load_n(&g_shared,__ATOMIC_ACQUIRE);
+    if(!s) return 0;
+    uint64_t healthy_generation=__atomic_load_n(&g_health_generation,__ATOMIC_ACQUIRE);
+    uint64_t deadline=__atomic_load_n(&g_health_deadline_ms,__ATOMIC_ACQUIRE);
+    uint64_t generation=__atomic_load_n(&s->generation,__ATOMIC_ACQUIRE);
+    uint64_t now=monotonic_ms();
+    return (generation&1u) && now && now<deadline &&
+        healthy_generation==generation;
+}
 
 void BTPSV88SetActive(int active) {
     BTPSV88Shared *s=__atomic_load_n(&g_shared,__ATOMIC_ACQUIRE);
     if(!s) return;
+    __atomic_store_n(&g_health_deadline_ms,0,__ATOMIC_RELEASE);
     uint64_t old=__atomic_load_n(&s->generation,__ATOMIC_RELAXED);
     /* Signaling is serialized by the native AVDTP dispatcher. */
     __atomic_store_n(&s->generation,((old&~1ull)+2u)|(active?1u:0u),__ATOMIC_RELEASE);
@@ -43,7 +62,7 @@ void BTPSV88Forward(uint32_t handle,uint32_t sequence,uint32_t timestamp,
     BTPSV88Event event={BTPS_V88_FORWARD,length,handle,result};
     btps_v88_event(s,0,event);
 }
-static void drain_logs(BTPSV88Shared *s) {
+static void drain_logs(BTPSV88Shared *s,BTPSV882Health *health,uint64_t now) {
     BTPSV88Event e;
     for(unsigned i=0;i<BTPS_V88_EVENTS;i++) {
         if(!btps_v88_pop(&s->forward_log,s->forwarded,sizeof s->forwarded[0],
@@ -53,7 +72,9 @@ static void drain_logs(BTPSV88Shared *s) {
     for(unsigned i=0;i<BTPS_V88_EVENTS;i++) {
         if(!btps_v88_pop(&s->decode_log,s->decoded,sizeof s->decoded[0],
                         BTPS_V88_EVENTS,&e,sizeof e)) break;
-        if(e.kind==BTPS_V88_DECODE)
+        if(e.kind==BTPS_V882_HEALTH)
+            btps_v882_health_render(health,e.bytes,e.frames,e.result==1,now);
+        else if(e.kind==BTPS_V88_DECODE)
             BTPSLogNow("V88_DECODE frames=%u bytes=%u result=%d",e.frames,e.bytes,e.result);
         else if(e.kind==BTPS_V881_PCM)
             BTPSLogNow("V881_PCM samples=%u nonzero=%d peak=%u",e.frames,e.result,e.bytes);
@@ -82,11 +103,18 @@ static int attach_helper(void) {
 }
 static void *worker(void *arg) {
     BTPSV88Shared *s=arg;
-    int fd=-1; unsigned ticks=0, retry=0, stale=0;
+    int fd=-1,last_ready=-1; unsigned ticks=0, retry=0, stale=0;
     uint64_t heartbeat=0,last_generation=0,last_drops=0,last_logs=0;
+    BTPSV882Health health={0};
     for(;;) {
-        drain_logs(s);
+        uint64_t now=monotonic_ms();
         uint64_t generation=__atomic_load_n(&s->generation,__ATOMIC_ACQUIRE);
+        uint64_t media=__atomic_load_n(&s->doorbell,__ATOMIC_ACQUIRE);
+        uint64_t helper=__atomic_load_n(&s->helper_heartbeat,__ATOMIC_ACQUIRE);
+        if(health.generation!=generation)
+            btps_v882_health_reset(&health,generation,media,helper);
+        btps_v882_health_sample(&health,media,helper,now);
+        drain_logs(s,&health,now);
         if(generation!=last_generation) {
             BTPSLogNow("V88_STREAM active=%u generation=%llu",(unsigned)(generation&1u),
                        (unsigned long long)(generation>>1));
@@ -98,6 +126,7 @@ static void *worker(void *arg) {
             stale=h==heartbeat?stale+1:0;heartbeat=h;
             if(n==0 || (n<0 && errno!=EAGAIN && errno!=EWOULDBLOCK && errno!=EINTR) || stale>250) {
                 close(fd);fd=-1;retry=50;stale=0;
+                btps_v882_health_reset(&health,generation,media,helper);
                 BTPSLogNow("V88_HELPER disconnected; retry remains off receive thread");
             }
         }
@@ -105,6 +134,22 @@ static void *worker(void *arg) {
         if(fd<0 && (generation&1u) && !retry) {
             fd=attach_helper();retry=100;
             BTPSLogNow("V88_HELPER %s port=%u",fd>=0?"mapped shared ring":"activation failed",BTPS_V88_PORT);
+        }
+        /* The lease also expires if this worker stalls. A real STOP changes
+         * generation immediately, so an old lease cannot keep it alive. */
+        int ready=now && btps_v882_health_ready(&health,fd>=0,now);
+        if(__atomic_load_n(&g_health_generation,__ATOMIC_RELAXED)!=generation) {
+            __atomic_store_n(&g_health_deadline_ms,0,__ATOMIC_RELEASE);
+            __atomic_store_n(&g_health_generation,generation,__ATOMIC_RELEASE);
+        }
+        __atomic_store_n(&g_health_deadline_ms,ready?now+500u:0,__ATOMIC_RELEASE);
+        if(ready!=last_ready) {
+            BTPSLogNow("V882_HEALTH ready=%d generation=%llu connected=%d playing=%u media_age_ms=%lld heartbeat_age_ms=%lld render_age_ms=%lld",
+                ready,(unsigned long long)(generation>>1),fd>=0,health.playing,
+                health.media_seen?(long long)(now-health.media_ms):-1ll,
+                health.heartbeat_seen?(long long)(now-health.heartbeat_ms):-1ll,
+                health.render_seen?(long long)(now-health.render_ms):-1ll);
+            last_ready=ready;
         }
         if(++ticks%50==0) {
             uint64_t drops=__atomic_load_n(&s->media.dropped,__ATOMIC_RELAXED);

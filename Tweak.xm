@@ -302,6 +302,7 @@ static volatile uint64_t g_v86_sink_media_cid = 0;
 /* SetConfigInd x2 is the native stream handle; x3/x4 are local/remote
  * SEIDs. Learn the handle here, never by calling the private CID lookup on RX. */
 static unsigned g_v88_ready, g_v88_sink_handle;
+static uint64_t g_v882_sink_owner;
 static uint64_t g_v88_callbacks[27];
 static BTPSV88Control g_v88_control;
 static pthread_mutex_t g_v88_control_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -311,6 +312,7 @@ static uint64_t hook_setconfigind(uint64_t a0,uint64_t a1,uint64_t a2,uint64_t a
     if (g_v88_ready && g_v82_armed && a3 == 7u && a2 > 0u && a2 <= 255u && a4 > 0u && a4 < 63u) {
         pthread_mutex_lock(&g_v88_control_lock);
         BTPSV88SetActive(0);
+        __atomic_store_n(&g_v882_sink_owner,a0,__ATOMIC_RELEASE);
         __atomic_store_n(&g_v88_sink_handle,(unsigned)a2,__ATOMIC_RELEASE);
         memset(&g_v88_control,0,sizeof g_v88_control);
         g_v88_control.local_seid=7;g_v88_control.remote_seid=(unsigned)a4;
@@ -324,8 +326,65 @@ static void btps_v88_note_signal(unsigned direction,uint64_t cid,const uint8_t *
     if (!g_v88_ready || !g_v82_sink_accepted) return;
     pthread_mutex_lock(&g_v88_control_lock);
     int change=btps_v88_signal(&g_v88_control,direction,cid,p,size);
-    if(change>=0) BTPSV88SetActive(change);
+    if(change>=0) {
+        BTPSV88SetActive(change);
+        BTPSLogNow("V882_CONTROL direction=%s CID=%#llx tx=%u msg=%u sig=%u active=%d",
+            direction?"TX":"RX",(unsigned long long)cid,p[0]>>4,p[0]&3u,p[1]&63u,change);
+    }
     pthread_mutex_unlock(&g_v88_control_lock);
+}
+
+/* v8.8.2: the verified native idle check assumes mediaserverd owns playback.
+ * x0 is the same owner as SetConfigInd x0; x1 is its x2 map key/handle (the
+ * lookup at +0x3747F0 is identical in both paths). No object fields are read.
+ * Only this idle check is skipped for a healthy, explicitly started helper
+ * session. Explicit Suspend/Close/Abort and other connections remain native. */
+#define BTPS_V882_IDLE_CHECK 0x00376034ul
+static const struct { uintptr_t offset; uint32_t words[4]; } BTPS_V882_IDLE_GATES[] = {
+    {0x376034u,{0xd503237fu,0xd10183ffu,0xa9025ff8u,0xa90357f6u}},
+    {0x376068u,{0xaa1503e0u,0xaa1403e1u,0x97fff9e0u,0xaa0003f3u}},
+    {0x37607cu,{0x91060260u,0xb942ca76u,0x9400e58bu,0x79001fe0u}},
+    {0x3760d8u,{0xaa1303e0u,0x940874afu,0x370004e0u,0xf94002f6u}},
+    {0x376138u,{0x91003be0u,0x52800021u,0xd2800002u,0x97f56f29u}},
+    {0x37aeccu,{0xaa1a03e0u,0xaa1903e1u,0x97ffe647u,0xaa0003f5u}},
+    {0x593398u,{0x394c0000u,0xd65f03c0u,0xaa0103e2u,0xaa0003e1u}}
+};
+typedef void (*btps_v882_idle_fn)(uint64_t,uint64_t);
+static btps_v882_idle_fn g_v882_idle_orig;
+static unsigned g_v882_idle_kept;
+static void btps_v882_idle_check(uint64_t owner,uint64_t key)
+{
+    unsigned handle=__atomic_load_n(&g_v88_sink_handle,__ATOMIC_ACQUIRE);
+    int sink=g_v88_ready && g_v82_armed && g_v82_sink_accepted && handle &&
+        owner==__atomic_load_n(&g_v882_sink_owner,__ATOMIC_ACQUIRE) && key==handle;
+    if(sink && BTPSV882SinkHealthy()) {
+        unsigned kept=__sync_add_and_fetch(&g_v882_idle_kept,1u);
+        BTPSSetStatus("diag.v882.idle_guard","v8.8.2 kept=%u last_handle=%u; healthy helper replaced native idle decision",kept,handle);
+        BTPSLogNow("V882_IDLE_GUARD action=keep handle=%u reason=live_helper; native mediaserverd-only idle check skipped",handle);
+        return;
+    }
+    if(sink) BTPSLogNow("V882_IDLE_GUARD action=pass handle=%u reason=inactive_or_unhealthy",handle);
+    if(g_v882_idle_orig) g_v882_idle_orig(owner,key);
+}
+static void btps_v882_install_idle_guard(uintptr_t base,int uuid_ok)
+{
+    if(!g_v88_ready || !g_v82_armed || !uuid_ok) return;
+    for(unsigned i=0;i<sizeof BTPS_V882_IDLE_GATES/sizeof BTPS_V882_IDLE_GATES[0];i++) {
+        uint32_t words[4];
+        if(!btps_peek(base+BTPS_V882_IDLE_GATES[i].offset,words,sizeof words) ||
+           memcmp(words,BTPS_V882_IDLE_GATES[i].words,sizeof words)) {
+            BTPSLogNow("V882_IDLE_GUARD refused: signature mismatch at +%#lx",(unsigned long)BTPS_V882_IDLE_GATES[i].offset);
+            BTPSSetStatus("diag.v882.idle_guard","REFUSED: exact-image idle-check gate failed");return;
+        }
+    }
+    void *trampoline=NULL;
+    MSHookFunction((void *)(base+BTPS_V882_IDLE_CHECK),(void *)btps_v882_idle_check,&trampoline);
+    if(!trampoline) {
+        BTPSSetStatus("diag.v882.idle_guard","FAILED: no idle-check trampoline");return;
+    }
+    g_v882_idle_orig=(btps_v882_idle_fn)trampoline;
+    BTPSSetStatus("diag.v882.idle_guard","v8.8.2 installed: configured Sink only, requires fresh media + helper rendering");
+    BTPSLogNow("V882_IDLE_GUARD installed at +0x376034; one-shot, owner/handle scoped, health lease required");
 }
 
 /* Existing SDP insertion routine, shared with the v8.3 post-registration path. */
@@ -1615,6 +1674,7 @@ static void install_hooks(uintptr_t base, int uuid_ok)
     btps_v82_install_tx((uintptr_t)mh, uuid_ok);
     if(g_v82_armed && uuid_ok) g_v88_ready=BTPSV88Prepare();
     if(g_v88_ready) btps_v87_install_media((uintptr_t)mh, uuid_ok);
+    if(g_v88_ready) btps_v882_install_idle_guard((uintptr_t)mh, uuid_ok);
     install_optional_sdp_probe((uintptr_t)mh, uuid_ok);
     btps_v83_install_native_registration((uintptr_t)mh, uuid_ok);
     /* Explicit user request only; no sockets or audio on Bluetooth callback threads. */
