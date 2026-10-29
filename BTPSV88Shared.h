@@ -21,7 +21,9 @@ typedef struct {
     uint8_t data[BTPS_V88_PAYLOAD];
 } BTPSV88Packet;
 typedef struct { uint64_t turn; BTPSV88Packet value; } BTPSV88PacketSlot;
-enum { BTPS_V88_FORWARD=1, BTPS_V88_DECODE=2, BTPS_V88_AUDIO=3 };
+/* Event additions preserve the existing shared-memory layout/version. */
+enum { BTPS_V88_FORWARD=1, BTPS_V88_DECODE=2, BTPS_V88_AUDIO=3,
+       BTPS_V881_PCM=4, BTPS_V881_RENDER=5, BTPS_V881_ROUTE=6 };
 typedef struct { uint32_t kind, bytes, frames; int32_t result; } BTPSV88Event;
 typedef struct { uint64_t turn; BTPSV88Event value; } BTPSV88EventSlot;
 typedef struct {

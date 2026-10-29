@@ -55,6 +55,12 @@ static void drain_logs(BTPSV88Shared *s) {
                         BTPS_V88_EVENTS,&e,sizeof e)) break;
         if(e.kind==BTPS_V88_DECODE)
             BTPSLogNow("V88_DECODE frames=%u bytes=%u result=%d",e.frames,e.bytes,e.result);
+        else if(e.kind==BTPS_V881_PCM)
+            BTPSLogNow("V881_PCM samples=%u nonzero=%d peak=%u",e.frames,e.result,e.bytes);
+        else if(e.kind==BTPS_V881_RENDER)
+            BTPSLogNow("V881_RENDER callbacks=%d pcm_frames=%u silence_frames=%u",e.result,e.frames,e.bytes);
+        else if(e.kind==BTPS_V881_ROUTE)
+            BTPSLogNow("V881_ROUTE built_in_speaker=%u volume_pct=%u rate=%u",(unsigned)(e.result==0),e.bytes,e.frames);
         else BTPSLogNow("V88_AUDIO status=%d rate=%u (0=started 1=stopped; errors are OSStatus)",e.result,e.frames);
     }
 }
