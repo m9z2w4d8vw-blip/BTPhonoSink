@@ -148,8 +148,8 @@
 		</dict>
 		<dict>
 			<key>cell</key><string>PSGroupCell</string>
-			<key>label</key><string>v8.2 decisive signaling experiment</string>
-			<key>footerText</key><string>DANGEROUS one-restart private-stack test. Requires BOTH this switch and seven-slot one-shot ON before restart. Only local SEP/SDP and inbound signaling capture attempted; MEDIA reception not implemented and cannot PASS. Normal headphones may fail. Log may contain Bluetooth addresses and protocol payloads. Revert to v8.1 on instability.</string>
+			<key>label</key><string>v8.8 continuous audio experiment</string>
+			<key>footerText</key><string>One-restart private-stack test. Requires BOTH this switch and seven-slot one-shot ON before restart. v8.8 forwards SBC to a separate audio helper after START is accepted. Both switches reset OFF before changes. Test at moderate volume; export the debug log and restart Bluetooth with switches OFF to end the trial.</string>
 		</dict>
 		<dict>
 			<key>cell</key><string>PSSwitchCell</string>

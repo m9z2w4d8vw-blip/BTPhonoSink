@@ -328,7 +328,6 @@ static void poll_cb(void *ctx)
     g_experiments = read_experiments_flag();
     publish_state();
     dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, 10LL * NSEC_PER_SEC), g_queue, NULL, poll_cb);
-    dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, 60LL * NSEC_PER_SEC), g_queue, NULL, heartbeat_cb);
 }
 
 void BTPSLogInit(void)

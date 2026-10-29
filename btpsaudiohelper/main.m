@@ -19,6 +19,7 @@
 #import "../BTPSIPCProtocol.h"
 #import "../BTPSV75RTP.h"
 #import "BTPSV76Decode.h"
+#import "BTPSV88Stream.h"
 
 static void w16(uint8_t *p,uint16_t v){p[0]=(uint8_t)v;p[1]=(uint8_t)(v>>8);}
 static void w32(uint8_t *p,uint32_t v){for(int i=0;i<4;i++)p[i]=(uint8_t)(v>>(i*8));}
@@ -110,6 +111,7 @@ static int play_pcm(const uint8_t *pcm, int daemon_mode) {
 }
 int main(int argc,const char **argv) {
     @autoreleasepool {
+        if(argc==2 && strcmp(argv[1],"--stream-service")==0) return BTPSV88StreamMain();
         /* Existing CLI preserved: no args or optional 15..180 second timeout.
          * New --daemon mode expects a v2 frame from bluetoothd, never Settings. */
         int daemon_mode=argc>=2 && strcmp(argv[1],"--daemon")==0;

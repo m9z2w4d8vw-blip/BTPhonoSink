@@ -75,13 +75,13 @@ static int get_request(CFStringRef key,uint32_t *token_out,char uuid_out[37])
     return ok;
 }
 
-static int timed_connect_loopback(int fd)
+static int timed_connect_port(int fd, uint16_t port)
 {
     int flags=fcntl(fd,F_GETFL,0);
     if(flags<0 || fcntl(fd,F_SETFL,flags|O_NONBLOCK)<0) return -1;
     struct sockaddr_in address={0};
     address.sin_family=AF_INET;
-    address.sin_port=htons(BTPS_IPC_PORT);
+    address.sin_port=htons(port);
     address.sin_addr.s_addr=htonl(INADDR_LOOPBACK);
     int r=connect(fd,(const struct sockaddr *)&address,sizeof address);
     if(r<0 && errno!=EINPROGRESS) return -1;
@@ -101,6 +101,14 @@ static int timed_connect_loopback(int fd)
     int nosigpipe=1;(void)setsockopt(fd,SOL_SOCKET,SO_NOSIGPIPE,&nosigpipe,sizeof nosigpipe);
     return 0;
 }
+
+int BTPSDaemonConnectLoopback(uint16_t port)
+{
+    int fd=socket(AF_INET,SOCK_STREAM,0);
+    if(fd>=0 && timed_connect_port(fd,port)<0) {close(fd);return -1;}
+    return fd;
+}
+static int timed_connect_loopback(int fd) { return timed_connect_port(fd,BTPS_IPC_PORT); }
 
 static int send_exact(int fd,const uint8_t *p,size_t n)
 {

@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+if [ "$1" = configure ]; then
+    if [ ! -d /tmp/FTABHarvest ]; then
+        mkdir -m 0777 /tmp/FTABHarvest
+        chown mobile:mobile /tmp/FTABHarvest
+    fi
+    plist=/var/jb/Library/LaunchDaemons/com.parv.btphonosink.audio.plist
+    chown root:wheel "$plist"
+    chmod 644 "$plist"
+    launchctl bootout system/com.parv.btphonosink.audio >/dev/null 2>&1 || true
+    launchctl bootstrap system "$plist" || {
+        echo 'BTPhonoSink: helper bootstrap failed; inspect launchctl before arming v8.8.' >&2
+        exit 1
+    }
+fi
+exit 0

@@ -12,11 +12,11 @@ class IntegrationTests(unittest.TestCase):
         self.assertIn('ring_write(g_decode_scratch',src)
         self.assertIn('BTPS_MEDIA_BACKPRESSURE',src)
         self.assertIn('All or nothing: never enqueue only part of an SBC packet',src)
-    def test_no_media_receiver_hook_enabled(self):
+    def test_live_media_receiver_remains_one_shot(self):
         tweak=(ROOT/'Tweak.xm').read_text()
         self.assertNotIn('hook_media_recv(',tweak)
         self.assertNotIn('btphonosink_on_rtp_packet(',tweak)
-        self.assertIn('NOT hooked - media transport/decoder wiring absent',tweak)
+        self.assertIn('v8.8 OFF until both one-shot switches are armed',tweak)
     def test_sbc_header_includes_crc_byte(self):
         src=(ROOT/'sbc_decode.c').read_text()
         self.assertIn('int header_bytes = 4;',src)

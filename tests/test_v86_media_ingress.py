@@ -4,7 +4,7 @@ from pathlib import Path
 S=(Path(__file__).resolve().parents[1]/'Tweak.xm').read_text()
 class V87MediaTest(unittest.TestCase):
     def test_build(self):
-        self.assertIn('v8.7-raw-media-entry-counter', S)
+        self.assertIn('v8.8-continuous-sbc-ring', S)
     def test_exact_verified_media_offset(self):
         self.assertIn('#define BTPS_V87_MEDIA_HANDLER 0x000d8cf8ul', S)
         self.assertIn('0xd503237fu, 0xd10203ffu, 0xa90367fau, 0xa9045ff8u', S)
@@ -14,8 +14,8 @@ class V87MediaTest(unittest.TestCase):
         self.assertIn('g_v87_media_recent[(calls - 1u) & 7u]', block)
         self.assertIn('__atomic_store_n(&record->cid, raw_cid', block)
         self.assertIn('__atomic_store_n(&record->bytes, raw_bytes', block)
-        self.assertIn('V87_MEDIA_ENTER', block)
-        self.assertIn('V87_MEDIA_RX', block)
+        self.assertNotIn('BTPSLog', block)
+        self.assertNotIn('BTPSSetStatus', block)
         self.assertIn('g_v87_media_orig(cid, packet, length, a3, a4, a5, a6, a7)',block)
         for forbidden in ['btps_peek(', 'g_v86_cid_lookup(', 'entry +', 'packet +', 'memcpy(', 'MSHookFunction(', 'g_v86_sink_media_cid']:
             self.assertNotIn(forbidden, block)

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.parv.btphonosink.audio</string>
+  <key>ProgramArguments</key><array>
+    <string>/var/jb/usr/bin/BTPSAudioHelper</string><string>--stream-service</string>
+  </array>
+  <key>UserName</key><string>mobile</string>
+  <key>GroupName</key><string>mobile</string>
+  <key>ProcessType</key><string>Interactive</string>
+  <key>ThrottleInterval</key><integer>5</integer>
+  <key>Sockets</key><dict><key>Stream</key><dict>
+    <key>SockNodeName</key><string>127.0.0.1</string>
+    <key>SockServiceName</key><string>37594</string>
+    <key>SockFamily</key><string>IPv4</string>
+    <key>SockType</key><string>stream</string>
+    <key>SockPassive</key><true/>
+  </dict></dict>
+  <key>StandardOutPath</key><string>/tmp/FTABHarvest/BTPSAudioHelper-v88.log</string>
+  <key>StandardErrorPath</key><string>/tmp/FTABHarvest/BTPSAudioHelper-v88.log</string>
+</dict></plist>

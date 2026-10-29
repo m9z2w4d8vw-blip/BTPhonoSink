@@ -73,8 +73,12 @@
 #include "BTPSV81Config.h"
 #include "BTPSV77Sink.h"
 #include "BTPSV82SDP.h"
+#include "BTPSV88Daemon.h"
+#include "BTPSV88Control.h"
+#include <pthread.h>
+#include <ptrauth.h>
 
-#define BTPS_BUILD_TAG "v8.7-raw-media-entry-counter"
+#define BTPS_BUILD_TAG "v8.8-continuous-sbc-ring"
 
 /* AVDTP constants, used for native Source registration diagnostics */
 #define BTPS_AVDTP_TSEP_SRC 0u
@@ -239,7 +243,7 @@ static void note_return(int idx, uint64_t r)
     }
 
 BTPS_OBSERVER(hook_advertise,     BTPS_H_ADVERTISE)
-BTPS_OBSERVER(hook_setconfigind,  BTPS_H_SETCONFIGIND)
+BTPS_OBSERVER(hook_setconfigind_observe, BTPS_H_SETCONFIGIND)
 BTPS_OBSERVER(hook_accept_sbc,    BTPS_H_ACCEPT_SBC)
 BTPS_OBSERVER(hook_publish,       BTPS_H_PUBLISH)
 
@@ -294,6 +298,35 @@ static volatile unsigned g_v86_sink_stream_started = 0;
 static volatile uint64_t g_v86_sink_sig_cid = 0;
 static volatile uint64_t g_v86_sink_media_cid = 0;
 
+
+/* SetConfigInd x2 is the native stream handle; x3/x4 are local/remote
+ * SEIDs. Learn the handle here, never by calling the private CID lookup on RX. */
+static unsigned g_v88_ready, g_v88_sink_handle;
+static uint64_t g_v88_callbacks[27];
+static BTPSV88Control g_v88_control;
+static pthread_mutex_t g_v88_control_lock = PTHREAD_MUTEX_INITIALIZER;
+static uint64_t hook_setconfigind(uint64_t a0,uint64_t a1,uint64_t a2,uint64_t a3,
+    uint64_t a4,uint64_t a5,uint64_t a6,uint64_t a7)
+{
+    if (g_v88_ready && g_v82_armed && a3 == 7u && a2 > 0u && a2 <= 255u && a4 > 0u && a4 < 63u) {
+        pthread_mutex_lock(&g_v88_control_lock);
+        BTPSV88SetActive(0);
+        __atomic_store_n(&g_v88_sink_handle,(unsigned)a2,__ATOMIC_RELEASE);
+        memset(&g_v88_control,0,sizeof g_v88_control);
+        g_v88_control.local_seid=7;g_v88_control.remote_seid=(unsigned)a4;
+        pthread_mutex_unlock(&g_v88_control_lock);
+        BTPSLogNow("V88_CONFIG handle=%u local_seid=7 remote_seid=%u",(unsigned)a2,(unsigned)a4);
+    }
+    return hook_setconfigind_observe(a0,a1,a2,a3,a4,a5,a6,a7);
+}
+static void btps_v88_note_signal(unsigned direction,uint64_t cid,const uint8_t *p,size_t size)
+{
+    if (!g_v88_ready || !g_v82_sink_accepted) return;
+    pthread_mutex_lock(&g_v88_control_lock);
+    int change=btps_v88_signal(&g_v88_control,direction,cid,p,size);
+    if(change>=0) BTPSV88SetActive(change);
+    pthread_mutex_unlock(&g_v88_control_lock);
+}
 
 /* Existing SDP insertion routine, shared with the v8.3 post-registration path. */
 typedef uint64_t (*btps_sdp_fn_t)(uint64_t, uint64_t);
@@ -664,6 +697,9 @@ static uint64_t btps_v82_receive_signal(uint64_t cid, uint64_t ptr, uint64_t len
                                        uint64_t a3,uint64_t a4,uint64_t a5,uint64_t a6,uint64_t a7)
 {
     uint32_t n = __sync_add_and_fetch(&g_v82_sig_calls, 1);
+    uint8_t control[1024];
+    if(length>=2u && length<=sizeof control && btps_peek(ptr,control,(size_t)length))
+        btps_v88_note_signal(0,cid,control,(size_t)length);
     if (length >= 2u && length <= 1024u) {
         uint8_t h[2];
         if (btps_peek(ptr, h, 2)) {
@@ -760,8 +796,13 @@ static uint64_t btps_v82_transmit_signal(uint64_t cid, uint64_t packet, uint64_t
         BTPSLogNow("V82 TX_SIGNAL #%u length outside safe capture range: %llu",
                    n, (unsigned long long)length);
     }
+    /* The native TX routine may take ownership of packet. Capture before it;
+     * apply the transition only after a successful queue result. */
+    uint8_t control[1024];
+    int control_ok=length>=2u && length<=sizeof control && btps_peek(packet,control,(size_t)length);
     uint64_t ret = g_v82_tx_orig
       ? g_v82_tx_orig(cid, packet, length, a3, a4, a5, a6, a7) : 0xFFFFFFFFu;
+    if(ret==0u && control_ok) btps_v88_note_signal(1,cid,control,(size_t)length);
     if (g_v82_armed && g_v82_sink_accepted && g_v86_start_pending &&
         ret == 0u && mtype == 2u && sig == 7u && tx == g_v86_start_label &&
         cid == g_v86_start_sig_cid) {
@@ -807,7 +848,7 @@ static void btps_v82_install_tx(uintptr_t base, int uuid_ok)
  * CRITICAL: do not dereference x1, perform the CID lookup at +0xD917C,
  * read ANY channel structure, or patch Apple's one-instruction media stub.
  * Counter counts raw handler-entry packet lengths, NOT parsed SBC bytes.
- * Logging is sampled to avoid overloading the Bluetooth receive thread. */
+ * v8.8 removes all logging/OS calls from this pass-through counter. */
 #define BTPS_V87_MEDIA_HANDLER 0x000d8cf8ul
 static const uint32_t BTPS_V87_MEDIA_SIG[4] = {
     0xd503237fu, 0xd10203ffu, 0xa90367fau, 0xa9045ff8u
@@ -827,31 +868,13 @@ static uint64_t btps_v87_receive_media(uint64_t cid, uint64_t packet,
     __atomic_store_n(&record->bytes, raw_bytes, __ATOMIC_RELAXED);
     __atomic_store_n(&record->sequence, calls, __ATOMIC_RELEASE);
 
-    const int sampled = calls <= 8u || (calls % 64u) == 0u;
-    /* A pre-native breadcrumb distinguishes a crash in the original handler
-     * from a crash before this callback ever runs.  No buffer dereferences. */
-    if (sampled) {
-        BTPSLogNow("V87_MEDIA_ENTER #%u cid=%#x bytes=%u sink_start=%u sig_cid=%#llx",
-                   calls, raw_cid, raw_bytes,
-                   (unsigned)g_v86_sink_stream_started,
-                   (unsigned long long)g_v86_sink_sig_cid);
-    }
-
     /* Call Apple's original function exactly once, without changing any
      * argument value or altering the result. */
     const uint64_t result = g_v87_media_orig
         ? g_v87_media_orig(cid, packet, length, a3, a4, a5, a6, a7)
         : 0xffffffffffffffffull;
 
-    const unsigned long long total = __sync_add_and_fetch(
-        &g_v87_media_bytes, (unsigned long long)raw_bytes);
-    if (sampled) {
-        BTPSLogNow("V87_MEDIA_RX cid=%#x bytes=%u total=%llu calls=%u ret=%#llx sink_start=%u (raw handler bytes, Sink CID not proven)",
-                   raw_cid, raw_bytes, total, calls,
-                   (unsigned long long)result, (unsigned)g_v86_sink_stream_started);
-        BTPSSetStatus("diag.v86.media", "V87_MEDIA_CALLS=%u V87_MEDIA_BYTES_RECEIVED_RAW=%llu last_cid=%#x last_len=%u; no Sink CID correlation yet",
-                      calls, total, raw_cid, raw_bytes);
-    }
+    __sync_add_and_fetch(&g_v87_media_bytes, (unsigned long long)raw_bytes);
     return result;
 }
 
@@ -879,6 +902,54 @@ static void btps_v87_install_media(uintptr_t base, int uuid_ok)
     BTPSLogNow("V87 MEDIA hook installed at image+0xD8CF8; raw w0/w2 ring[8], no channel reads or packet dereferences");
 }
 
+/* Exact firmware's table is borrowed static storage, 27 function pointers.
+ * Copy ALL entries, preserve their PAC bits, change only +0xb0. The native
+ * register routine stores the table pointer at context+0x18 (+0xce3d4).
+ * braaz at +0xd8fa4 authenticates the media function with IA, discriminator 0.
+ * A 4-byte RET stub cannot safely hold an ordinary MSHookFunction patch. */
+static uint64_t btps_v88_media_callback(uint64_t handle,uint64_t sequence,
+    uint64_t timestamp,uint64_t payload,uint64_t length,uint64_t type,
+    uint64_t marker,uint64_t error)
+{
+    (void)type;(void)marker;
+    BTPSV88Forward((uint32_t)handle,(uint32_t)sequence,(uint32_t)timestamp,
+                   (const uint8_t *)(uintptr_t)payload,(uint32_t)length,(uint32_t)error,
+                   __atomic_load_n(&g_v88_sink_handle,__ATOMIC_ACQUIRE));
+    return handle; /* preserve x0 behavior of the replaced RET */
+}
+static int btps_v88_install_callback(uint64_t context)
+{
+    if(!g_v88_ready || !g_v78_exact_uuid || !g_v87_media_hook_ok) return 0;
+    const uint32_t offsets[27]={
+        0x384f94,0x385044,0x385104,0x3851c4,0x385274,0x38532c,0x3853f4,
+        0x38549c,0x38554c,0x3855f4,0x385684,0x385714,0x3857ac,0x385844,
+        0x3858f4,0x38598c,0x385a3c,0x385adc,0x385b84,0x385c24,0x385cd4,
+        0x385d64,0x385dfc,0x385e00,0x385e1c,0x385ed4,0x385f6c};
+    uint64_t table=0;uint32_t stub=0,branch=0,load=0,store=0;
+    if(!btps_peek(context+0x18u,&table,8) || table!=g_v78_base+0x92a248u ||
+       !btps_peek(table,g_v88_callbacks,sizeof g_v88_callbacks) ||
+       !btps_peek(g_v78_base+0x385dfcu,&stub,4) || stub!=0xd65f03c0u ||
+       !btps_peek(g_v78_base+0xd8fa4u,&branch,4) || branch!=0xd61f091fu ||
+       !btps_peek(g_v78_base+0xd8f28u,&load,4) || load!=0xf9405900u ||
+       !btps_peek(g_v78_base+0xce3d4u,&store,4) || store!=0xf9000d16u) {
+        BTPSLogNow("V88_CALLBACK refused: exact table/stub/callsite mismatch");return 0;
+    }
+    for(unsigned i=0;i<27;i++) {
+        uintptr_t pointer=(uintptr_t)ptrauth_strip((void *)(uintptr_t)g_v88_callbacks[i],ptrauth_key_function_pointer);
+        if(pointer!=g_v78_base+offsets[i]) {
+            BTPSLogNow("V88_CALLBACK refused: table entry %u differs",i);return 0;
+        }
+    }
+    void *raw=ptrauth_strip((void *)btps_v88_media_callback,ptrauth_key_function_pointer);
+    g_v88_callbacks[22]=(uint64_t)(uintptr_t)ptrauth_sign_unauthenticated(raw,ptrauth_key_function_pointer,0);
+    uint64_t expected=table;
+    if(!__atomic_compare_exchange_n((uint64_t *)(uintptr_t)(context+0x18u),&expected,
+          (uint64_t)(uintptr_t)g_v88_callbacks,0,__ATOMIC_RELEASE,__ATOMIC_RELAXED)) return 0;
+    BTPSLogNow("V88_CALLBACK installed table_copy=27 slot=+0xb0 original=+0x385dfc IA=0; stub code untouched");
+    BTPSSetStatus("diag.audio_receive","v8.8 callback ready; shared ring -> helper after accepted START");
+    return 1;
+}
+
 /* v8.3 one-shot: swap higher-level audio context AFTER the native Source
  * registration function returns. The original source-capability allocations
  * remain owned by the native daemon and are referenced by the new table.
@@ -898,6 +969,7 @@ static void btps_v83_attempt_post_source(uint64_t audio_context)
         avdtp_slots != 7u) {
         BTPSLogNow("V83 REFUSED: low-level AVDTP allocation is not 7 slots"); return;
     }
+    if (!btps_v88_install_callback(avdtp_context)) return;
     if (!audio_context) {
         BTPSLogNow("V83 REFUSED: audio context pointer is null"); return;
     }
@@ -1486,7 +1558,7 @@ static void install_hooks(uintptr_t base, int uuid_ok)
     BTPSSetStatus("experiments", "off (v7 forced-passive, stored=%s)", BTPSExperimentsEnabled() ? "ON" : "off");
     BTPSSetStatus("experiment.sink_register", "v8.2: OFF by default; separate one-shot Sink trial only with seven-slot arm");
     BTPSSetStatus("diag.sdp_sink_0x110b", "not verified; optional trial may add local 0x110B candidate");
-    BTPSSetStatus("diag.audio_receive", "NOT hooked - media transport/decoder wiring absent");
+    BTPSSetStatus("diag.audio_receive", "v8.8 OFF until both one-shot switches are armed");
     BTPSSetStatus("diag.v77_sink_trial", "DISABLED permanently in v7.8 after return 0x68");
     BTPSSetStatus("diag.v78_table", "PENDING: read-only table scan after six normal Sources");
     BTPSSetStatus("diag.v79_allocator", "PENDING: allocation geometry after six normal Sources");
@@ -1498,7 +1570,7 @@ static void install_hooks(uintptr_t base, int uuid_ok)
     BTPSSetStatus("diag.v82.sep", "NOT attempted");
     BTPSSetStatus("diag.v82.sdp", "NOT published");
     BTPSSetStatus("diag.v82.rx", "NOT hooked");
-    BTPSSetStatus("diag.v82.media", "UNOBSERVED: media callback not hooked; no PASS possible in this build");
+    BTPSSetStatus("diag.v82.media", "v8.8 waiting for shared ring and verified callback table");
     BTPSSetStatus("diag.v86.media", "V87 OFF: raw media entry counter not armed");
     BTPSSetStatus("diag.v82.tx", "OFF: experimental TX hook not armed");
     BTPSSetStatus("diag.session_id", "%ld-%d", (long)time(NULL), (int)getpid());
@@ -1541,7 +1613,8 @@ static void install_hooks(uintptr_t base, int uuid_ok)
     btps_v80_install_config_observer((uintptr_t)mh, uuid_ok);
     btps_v82_install_rx((uintptr_t)mh, uuid_ok);
     btps_v82_install_tx((uintptr_t)mh, uuid_ok);
-    btps_v87_install_media((uintptr_t)mh, uuid_ok);
+    if(g_v82_armed && uuid_ok) g_v88_ready=BTPSV88Prepare();
+    if(g_v88_ready) btps_v87_install_media((uintptr_t)mh, uuid_ok);
     install_optional_sdp_probe((uintptr_t)mh, uuid_ok);
     btps_v83_install_native_registration((uintptr_t)mh, uuid_ok);
     /* Explicit user request only; no sockets or audio on Bluetooth callback threads. */

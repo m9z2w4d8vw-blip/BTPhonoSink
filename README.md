@@ -1,3 +1,7 @@
+> Current experiment: **v8.8 continuous SBC audio**. See [TESTING-v8.8.md](TESTING-v8.8.md)
+> for installation, one-shot controls, logs, architecture, and device-test limits.
+> Earlier sections below describe previous research stages.
+
 # BTPhonoSink v8.2 — opt-in native A2DP Sink signaling research
 
 This source incorporates the prior v8.1 verified 7-slot initialization shadow and adds one gated **real Sink-role (TSEP=1) SEP registration**, a separate long-lived local `0x110B` SDP record, and raw RX logging of native AVDTP **signaling**. Both independent one-shot switches must be explicitly armed; default behavior preserves the previous passive hooks. Rootless tweak targets the *exact* supplied iOS 17.0 `bluetoothd` SHA-256 and LC_UUID.
