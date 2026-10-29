@@ -41,3 +41,8 @@ endif
 ifneq ($(strip $(SUBPROJECTS)),)
 include $(THEOS_MAKE_PATH)/aggregate.mk
 endif
+
+# Browser uploads store maintainer scripts as 0644. Repair the staged copies
+# after Theos creates DEBIAN/control and before its DEB packager validates them.
+before-package:: $(THEOS_STAGING_DIR)/DEBIAN/control
+	chmod 0755 "$(THEOS_STAGING_DIR)/DEBIAN/postinst" "$(THEOS_STAGING_DIR)/DEBIAN/prerm"
