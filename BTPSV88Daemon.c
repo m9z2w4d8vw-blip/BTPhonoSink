@@ -18,6 +18,43 @@
 
 static BTPSV88Shared *g_shared;
 static BTPSV88Hello g_hello;
+
+/* v8.9.3: one V88_FORWARD and one V88_DECODE line per packet filled 94% of the log, so a Settings export showed only
+ * the last ~7 seconds of a session. Successful packets are now counted and summarized every two seconds (and right
+ * before any stream state change); anything unusual is still logged individually, at most BTPS_V893_DETAILS_PER_WINDOW
+ * lines per window, with a count of what was held back. */
+#define BTPS_V893_SUMMARY_MS 2000u
+#define BTPS_V893_DETAILS_PER_WINDOW 8u
+typedef struct {
+    uint64_t forwarded, forward_ok, forward_inactive, forward_other, forward_bytes;
+    uint64_t decoded, decode_ok, decode_partial, decode_bad, decode_frames;
+    unsigned details, held_back;
+} BTPSV893Tally;
+static BTPSV893Tally g_v893_tally;
+static uint64_t g_v893_window_ms;
+static BTPSV88Event g_v893_pending_pcm;     /* the helper sends PCM then RENDER; they are logged as one line */
+static int g_v893_have_pcm;
+static int v893_detail_allowed(void) {
+    if(g_v893_tally.details<BTPS_V893_DETAILS_PER_WINDOW) {g_v893_tally.details++;return 1;}
+    g_v893_tally.held_back++;return 0;
+}
+/* Writes the window's summary (if anything happened) and starts a new window. force=1 flushes immediately. */
+static void v893_flush_tally(uint64_t now,int force) {
+    if(!g_v893_window_ms) g_v893_window_ms=now;
+    if(!force && now-g_v893_window_ms<BTPS_V893_SUMMARY_MS) return;
+    const BTPSV893Tally *t=&g_v893_tally;
+    if(t->forwarded || t->decoded || t->held_back)
+        BTPSLogNow("V893_RX %llums forwarded=%llu ok=%llu inactive=%llu other=%llu bytes=%llu "
+                   "decoded=%llu ok=%llu partial=%llu bad=%llu frames=%llu held_back=%u",
+                   (unsigned long long)(now>=g_v893_window_ms?now-g_v893_window_ms:0),
+                   (unsigned long long)t->forwarded,(unsigned long long)t->forward_ok,
+                   (unsigned long long)t->forward_inactive,(unsigned long long)t->forward_other,
+                   (unsigned long long)t->forward_bytes,(unsigned long long)t->decoded,
+                   (unsigned long long)t->decode_ok,(unsigned long long)t->decode_partial,
+                   (unsigned long long)t->decode_bad,(unsigned long long)t->decode_frames,t->held_back);
+    memset(&g_v893_tally,0,sizeof g_v893_tally);
+    g_v893_window_ms=now;
+}
 static uint64_t g_health_generation,g_health_deadline_ms;
 static uint64_t monotonic_ms(void) {
     struct timespec ts;
@@ -67,19 +104,37 @@ static void drain_logs(BTPSV88Shared *s,BTPSV882Health *health,uint64_t now) {
     for(unsigned i=0;i<BTPS_V88_EVENTS;i++) {
         if(!btps_v88_pop(&s->forward_log,s->forwarded,sizeof s->forwarded[0],
                         BTPS_V88_EVENTS,&e,sizeof e)) break;
-        BTPSLogNow("V88_FORWARD bytes=%u handle=%u result=%d",e.bytes,e.frames,e.result);
+        g_v893_tally.forwarded++;g_v893_tally.forward_bytes+=e.bytes;
+        if(e.result==0) g_v893_tally.forward_ok++;
+        else if(e.result==-1) g_v893_tally.forward_inactive++;   /* expected just after STOP/SUSPEND */
+        else {
+            g_v893_tally.forward_other++;
+            if(v893_detail_allowed()) BTPSLogNow("V88_FORWARD bytes=%u handle=%u result=%d",e.bytes,e.frames,e.result);
+        }
     }
     for(unsigned i=0;i<BTPS_V88_EVENTS;i++) {
         if(!btps_v88_pop(&s->decode_log,s->decoded,sizeof s->decoded[0],
                         BTPS_V88_EVENTS,&e,sizeof e)) break;
         if(e.kind==BTPS_V882_HEALTH)
             btps_v882_health_render(health,e.bytes,e.frames,e.result==1,now);
-        else if(e.kind==BTPS_V88_DECODE)
-            BTPSLogNow("V88_DECODE frames=%u bytes=%u result=%d",e.frames,e.bytes,e.result);
-        else if(e.kind==BTPS_V881_PCM)
-            BTPSLogNow("V881_PCM samples=%u nonzero=%d peak=%u",e.frames,e.result,e.bytes);
-        else if(e.kind==BTPS_V881_RENDER)
-            BTPSLogNow("V881_RENDER callbacks=%d pcm_frames=%u silence_frames=%u",e.result,e.frames,e.bytes);
+        else if(e.kind==BTPS_V88_DECODE) {
+            g_v893_tally.decoded++;g_v893_tally.decode_frames+=e.frames;
+            if(e.result==0) g_v893_tally.decode_ok++;
+            else if(e.result==1) g_v893_tally.decode_partial++;      /* SBC fragment still being reassembled */
+            else {
+                g_v893_tally.decode_bad++;
+                if(v893_detail_allowed()) BTPSLogNow("V88_DECODE frames=%u bytes=%u result=%d",e.frames,e.bytes,e.result);
+            }
+        }
+        else if(e.kind==BTPS_V881_PCM) {g_v893_pending_pcm=e;g_v893_have_pcm=1;}
+        else if(e.kind==BTPS_V881_RENDER) {
+            if(g_v893_have_pcm)
+                BTPSLogNow("V881_PCM samples=%u nonzero=%d peak=%u | RENDER callbacks=%d pcm_frames=%u silence_frames=%u",
+                           g_v893_pending_pcm.frames,g_v893_pending_pcm.result,g_v893_pending_pcm.bytes,
+                           e.result,e.frames,e.bytes);
+            else BTPSLogNow("V881_RENDER callbacks=%d pcm_frames=%u silence_frames=%u",e.result,e.frames,e.bytes);
+            g_v893_have_pcm=0;
+        }
         else if(e.kind==BTPS_V881_ROUTE)
             BTPSLogNow("V881_ROUTE route_ok=%u volume_pct=%u rate=%u",(unsigned)(e.result==0),e.bytes,e.frames);
         else BTPSLogNow("V88_AUDIO status=%d rate=%u (0=started 1=stopped; errors are OSStatus)",e.result,e.frames);
@@ -115,6 +170,7 @@ static void *worker(void *arg) {
             btps_v882_health_reset(&health,generation,media,helper);
         btps_v882_health_sample(&health,media,helper,now);
         drain_logs(s,&health,now);
+        v893_flush_tally(now,generation!=last_generation);
         if(generation!=last_generation) {
             BTPSLogNow("V88_STREAM active=%u generation=%llu",(unsigned)(generation&1u),
                        (unsigned long long)(generation>>1));

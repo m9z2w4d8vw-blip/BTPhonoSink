@@ -2,7 +2,9 @@
 #import "BTPSLogReader.h"
 
 #import <CoreFoundation/CoreFoundation.h>
+#include <errno.h>
 #include <notify.h>
+#include <stdio.h>
 
 #import "BTPSShared.h"
 
@@ -54,6 +56,32 @@ static NSArray<NSString *> *ReadFileLines(NSString *path, NSString **note)
     if (lines.count > 480) [lines removeObjectsInRange:NSMakeRange(0, lines.count - 480)];
     *note = lines.count ? @"ok" : @"empty";
     return lines;
+}
+
+// v8.9.3: the last `maxBytes` of a file as lines, dropping a partial first line. Never reads the whole file: launchd
+// appends to the helper log indefinitely.
+static NSArray<NSString *> *ReadFileTail(NSString *path, size_t maxBytes, NSString **note)
+{
+    FILE *f = fopen(path.fileSystemRepresentation, "rb");
+    if (!f) { *note = [NSString stringWithFormat:@"not readable (errno %d)", errno]; return @[]; }
+    off_t size = fseeko(f, 0, SEEK_END) == 0 ? ftello(f) : 0;
+    off_t start = size > (off_t)maxBytes ? size - (off_t)maxBytes : 0;
+    NSMutableData *data = [NSMutableData dataWithLength:(NSUInteger)(size > start ? size - start : 0)];
+    size_t got = (data.length && fseeko(f, start, SEEK_SET) == 0) ? fread(data.mutableBytes, 1, data.length, f) : 0;
+    fclose(f);
+    data.length = got;
+    NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding]
+                  ?: [[NSString alloc] initWithData:data encoding:NSISOLatin1StringEncoding];
+    NSMutableArray<NSString *> *lines = [[(text ?: @"") componentsSeparatedByString:@"\n"] mutableCopy];
+    if (start > 0 && lines.count) [lines removeObjectAtIndex:0];
+    while (lines.count && lines.lastObject.length == 0) [lines removeLastObject];
+    *note = lines.count ? @"ok" : @"empty";
+    return lines;
+}
+
+static NSString *HelperText(id value)
+{
+    return [value isKindOfClass:[NSString class]] ? value : @"";
 }
 
 - (BTPSSnapshot *)snapshot
@@ -151,6 +179,59 @@ static NSArray<NSString *> *ReadFileLines(NSString *path, NSString **note)
 
 #pragma mark - the debug log screen
 
+// v8.9.3: everything about where the audio went, so one export answers it without scp: the output settings, the
+// helper's last published status (state, route, volume) and its own log (routes, starts, stops, stop reasons).
+- (void)appendHelperSection:(NSMutableString *)out
+{
+    CFStringRef domain = CFSTR(BTPS_PREFS_DOMAIN);
+    CFPreferencesAppSynchronize(domain);
+    id mode = CFBridgingRelease(CFPreferencesCopyAppValue(CFSTR(BTPS_KEY_V89_OUTPUT_MODE), domain));
+    id never = CFBridgingRelease(CFPreferencesCopyAppValue(CFSTR(BTPS_KEY_V89_NEVER), domain));
+    id helper = CFBridgingRelease(CFPreferencesCopyAppValue(CFSTR(BTPS_KEY_V89_HELPER), domain));
+
+    [out appendString:@"\n== AUDIO HELPER (where the audio is played) ==\n"];
+    [out appendFormat:@"Play audio on: %@\n", HelperText(mode).length ? mode : @"speaker (default)"];
+    NSMutableArray<NSString *> *names = [NSMutableArray array];
+    if ([never isKindOfClass:[NSArray class]])
+        for (id item in (NSArray *)never)
+            if ([item isKindOfClass:[NSDictionary class]])
+                [names addObject:HelperText(((NSDictionary *)item)[@"name"]).length ? ((NSDictionary *)item)[@"name"] : @"(unnamed)"];
+    [out appendFormat:@"Never play to: %@\n", names.count ? [names componentsJoinedByString:@", "] : @"(none)"];
+
+    if ([helper isKindOfClass:[NSDictionary class]]) {
+        NSDictionary *h = helper;
+        NSMutableArray<NSString *> *outs = [NSMutableArray array];
+        if ([h[@"outputs"] isKindOfClass:[NSArray class]])
+            for (id o in (NSArray *)h[@"outputs"])
+                if ([o isKindOfClass:[NSDictionary class]])
+                    [outs addObject:[NSString stringWithFormat:@"%@ [%@]", HelperText(((NSDictionary *)o)[@"name"]),
+                                                               HelperText(((NSDictionary *)o)[@"type"])]];
+        NSString *volume = [h[@"volume"] isKindOfClass:[NSNumber class]]
+            ? [NSString stringWithFormat:@"%.0f%%", [h[@"volume"] doubleValue] * 100.0] : @"?";
+        double when = [h[@"time"] isKindOfClass:[NSNumber class]] ? [h[@"time"] doubleValue] : 0.0;
+        [out appendFormat:@"Helper status: %@ (%@) mode=%@ outputs=%@ volume=%@ updated %.0f s ago\n",
+            HelperText(h[@"state"]), HelperText(h[@"reason"]).length ? h[@"reason"] : @"-", HelperText(h[@"mode"]),
+            outs.count ? [outs componentsJoinedByString:@" + "] : @"(none)", volume,
+            when > 0 ? [NSDate date].timeIntervalSince1970 - when : -1.0];
+    } else {
+        [out appendString:@"Helper status: none reported yet\n"];
+    }
+
+    NSString *note = nil;
+    NSArray<NSString *> *tail = ReadFileTail(@BTPS_HELPER_LOG_FILE, 256u * 1024u, &note);
+    NSMutableArray<NSString *> *events = [NSMutableArray array];
+    for (NSString *line in tail)
+        if ([line rangeOfString:@"V881_PCM"].location == NSNotFound &&
+            [line rangeOfString:@"V881_RENDER"].location == NSNotFound) [events addObject:line];
+    if (events.count > 150) [events removeObjectsInRange:NSMakeRange(0, events.count - 150)];
+    [out appendFormat:@"\n-- helper key events: routes, starts, stops (%@, last %lu) --\n", note, (unsigned long)events.count];
+    for (NSString *line in events) [out appendFormat:@"%@\n", line];
+    NSUInteger recent = MIN((NSUInteger)24, tail.count);
+    [out appendFormat:@"\n-- helper most recent lines (last %lu) --\n", (unsigned long)recent];
+    for (NSString *line in [tail subarrayWithRange:NSMakeRange(tail.count - recent, recent)])
+        [out appendFormat:@"%@\n", line];
+}
+
 - (NSString *)fullText
 {
     BTPSSnapshot *s = [self snapshot];
@@ -213,6 +294,8 @@ static NSArray<NSString *> *ReadFileLines(NSString *path, NSString **note)
         for (NSString *k in [s.status.allKeys sortedArrayUsingSelector:@selector(compare:)])
             [out appendFormat:@"%@: %@\n", k, s.status[k]];
     }
+
+    [self appendHelperSection:out];
 
     [out appendString:@"\n== WHAT THIS SCREEN COULD READ ==\n"];
     [out appendFormat:@"preferences : %lu line(s)\n", (unsigned long)s.prefLines.count];

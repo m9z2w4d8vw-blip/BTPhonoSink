@@ -13,6 +13,7 @@
 #include <fcntl.h>
 #include <notify.h>
 #include <pthread.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
@@ -29,6 +30,17 @@ static int g_output_mode=BTPS_V89_MODE_SPEAKER;
 static NSArray<NSDictionary *> *g_never_outputs;
 static int g_output_notify=-1;
 static void publish_status(NSString *state,NSString *reason,BOOL force);
+/* v8.9.3: every helper line gets the same HH:MM:SS.mmm prefix as the daemon log, so the two can be read side by
+ * side (the Settings export now shows both). Defined above PCM_CAPACITY: the render callback below never logs. */
+static void hlog(FILE *stream,const char *fmt,...) __attribute__((format(printf,2,3)));
+static void hlog(FILE *stream,const char *fmt,...) {
+    struct timespec ts;struct tm tm;
+    if(clock_gettime(CLOCK_REALTIME,&ts)) {ts.tv_sec=time(NULL);ts.tv_nsec=0;}
+    time_t secs=ts.tv_sec;localtime_r(&secs,&tm);
+    fprintf(stream,"%02d:%02d:%02d.%03ld ",tm.tm_hour,tm.tm_min,tm.tm_sec,(long)(ts.tv_nsec/1000000L));
+    va_list ap;va_start(ap,fmt);vfprintf(stream,fmt,ap);va_end(ap);
+    fflush(stream);
+}
 
 #define PCM_CAPACITY 16384u /* stereo frames, <= 372ms; discard oldest on overflow */
 #define AUDIO_FRAMES 512u
@@ -80,7 +92,7 @@ static void stop_output(Output *o,BTPSV88Shared *s,const char *reason) {
     __atomic_store_n(&o->stopping,1,__ATOMIC_RELEASE);
     if(!o->queue) return;
     uint64_t current_generation=__atomic_load_n(&s->generation,__ATOMIC_ACQUIRE);
-    fprintf(stdout,"V882_AUDIO_STOP reason=%s generation=%llu active=%u\n",reason,
+    hlog(stdout,"V882_AUDIO_STOP reason=%s generation=%llu active=%u\n",reason,
         (unsigned long long)(current_generation>>1),(unsigned)(current_generation&1u));fflush(stdout);
     btps_v88_event(s,1,(BTPSV88Event){BTPS_V882_HEALTH,
         (uint32_t)current_generation,
@@ -122,7 +134,7 @@ static void load_output_settings(void) {
         for(id item in (NSArray *)never)
             if([item isKindOfClass:[NSDictionary class]] && list.count<BTPS_V89_MAX_NEVER) [list addObject:item];
     g_never_outputs=list;
-    fprintf(stdout,"V889_OUTPUT_SETTINGS mode=%s never_play=%lu\n",btps_v89_mode_name(g_output_mode),
+    hlog(stdout,"V889_OUTPUT_SETTINGS mode=%s never_play=%lu\n",btps_v89_mode_name(g_output_mode),
             (unsigned long)list.count);
     fflush(stdout);
 }
@@ -159,11 +171,13 @@ static void publish_status(NSString *state,NSString *reason,BOOL force) {
     BOOL changed=![state isEqualToString:g_status_state] || ![reason isEqualToString:g_status_reason];
     if(!force && !changed && now-g_status_written_ms<5000u) return;
     g_status_state=state;g_status_reason=reason;g_status_written_ms=now;
+    AVAudioSession *session=[AVAudioSession sharedInstance];
     NSMutableArray *outputs=[NSMutableArray array];
-    for(AVAudioSessionPortDescription *port in [AVAudioSession sharedInstance].currentRoute.outputs)
+    for(AVAudioSessionPortDescription *port in session.currentRoute.outputs)
         [outputs addObject:@{@"name":port.portName?:@"",@"type":port.portType?:@"",@"uid":port.UID?:@""}];
+    /* v8.9.3: the route's output volume (0..1). The 21:05 log showed 0% while "playing", which is silent. */
     NSDictionary *status=@{@"version":@1,@"state":state,@"reason":reason,
-        @"mode":@(btps_v89_mode_name(g_output_mode)),@"outputs":outputs,
+        @"mode":@(btps_v89_mode_name(g_output_mode)),@"outputs":outputs,@"volume":@(session.outputVolume),
         @"time":@([[NSDate date] timeIntervalSince1970]),@"pid":@(getpid())};
     if(!g_status_queue) g_status_queue=dispatch_queue_create("com.parv.btphonosink.helper.status",DISPATCH_QUEUE_SERIAL);
     dispatch_async(g_status_queue,^{
@@ -177,13 +191,13 @@ static void log_route(AVAudioSession *session,const char *stage,unsigned rate,BT
     btps_v88_event(s,1,(BTPSV88Event){BTPS_V881_ROUTE,
         (uint32_t)(session.outputVolume*100.0f+0.5f),rate,verdict?-102:0});
     for(AVAudioSessionPortDescription *port in session.currentRoute.outputs)
-        fprintf(stdout,"V889_AUDIO_ROUTE stage=%s mode=%s type=%s name=%s rate=%u volume=%.3f route_ok=%d\n",
+        hlog(stdout,"V889_AUDIO_ROUTE stage=%s mode=%s type=%s name=%s rate=%u volume=%.3f route_ok=%d\n",
                 stage,btps_v89_mode_name(g_output_mode),port.portType.UTF8String,port.portName.UTF8String,
                 rate,session.outputVolume,!verdict);
     if(!session.currentRoute.outputs.count)
-        fprintf(stdout,"V889_AUDIO_ROUTE stage=%s mode=%s outputs=0 route_ok=0\n",stage,btps_v89_mode_name(g_output_mode));
+        hlog(stdout,"V889_AUDIO_ROUTE stage=%s mode=%s outputs=0 route_ok=0\n",stage,btps_v89_mode_name(g_output_mode));
     if(verdict)
-        fprintf(stdout,"V889_ROUTE_REFUSED stage=%s mode=%s reason=%s device=%s\n",stage,
+        hlog(stdout,"V889_ROUTE_REFUSED stage=%s mode=%s reason=%s device=%s\n",stage,
                 btps_v89_mode_name(g_output_mode),btps_v89_route_reason(verdict),(device?:@"-").UTF8String);
     fflush(stdout);
 }
@@ -213,7 +227,7 @@ static int configure_speaker(unsigned rate,BTPSV88Shared *s) {
     if(ok) {stage="activate";ok=[session setActive:YES error:&error];}
     if(ok) {stage="speaker_override";ok=[session overrideOutputAudioPort:AVAudioSessionPortOverrideSpeaker error:&error];}
     if(!ok) {
-        fprintf(stderr,"V881_AUDIO_FAIL stage=%s domain=%s code=%ld error=%s\n",stage,
+        hlog(stderr,"V881_AUDIO_FAIL stage=%s domain=%s code=%ld error=%s\n",stage,
             (error.domain?:@"unknown").UTF8String,(long)error.code,
             (error.localizedDescription?:@"unknown").UTF8String);
         [session setActive:NO error:NULL];
@@ -223,7 +237,7 @@ static int configure_speaker(unsigned rate,BTPSV88Shared *s) {
     for(unsigned i=0;i<20 && !speaker_selected(session);i++) usleep(10000);
     log_route(session,"configured",rate,s);
     if(!speaker_selected(session)) {
-        fprintf(stderr,"V881_AUDIO_FAIL stage=route_check expected=built_in_speaker\n");
+        hlog(stderr,"V881_AUDIO_FAIL stage=route_check expected=built_in_speaker\n");
         [session setActive:NO error:NULL];
         btps_v88_event(s,1,(BTPSV88Event){BTPS_V88_AUDIO,0,rate,-102});return -1;
     }
@@ -243,7 +257,7 @@ static int configure_external(unsigned rate,BTPSV88Shared *s) {
         stage="activate";ok=[session setActive:YES error:&error];
     }
     if(!ok) {
-        fprintf(stderr,"V889_AUDIO_FAIL stage=%s domain=%s code=%ld error=%s\n",stage,
+        hlog(stderr,"V889_AUDIO_FAIL stage=%s domain=%s code=%ld error=%s\n",stage,
             (error.domain?:@"unknown").UTF8String,(long)error.code,
             (error.localizedDescription?:@"unknown").UTF8String);
         [session setActive:NO error:NULL];
@@ -312,8 +326,8 @@ static void report_progress(Output *o,PCMLevels *level,BTPSV88Shared *s) {
     OSStatus status=o->queue?AudioQueueGetProperty(o->queue,kAudioQueueProperty_IsRunning,&running,&size):-1;
     pthread_mutex_lock(&o->lock);unsigned queued=o->count;pthread_mutex_unlock(&o->lock);
     int route_ok=!route_verdict([AVAudioSession sharedInstance],NULL);
-    fprintf(stdout,"V881_PCM samples=%u nonzero=%u peak=%u\n",level->samples,level->nonzero,level->peak);
-    fprintf(stdout,"V881_RENDER callbacks=%llu pcm_frames=%llu nonzero_samples=%llu silence_frames=%llu queued_frames=%u dropped_frames=%llu queue_running=%u query_status=%d route_ok=%d mode=%s\n",
+    hlog(stdout,"V881_PCM samples=%u nonzero=%u peak=%u\n",level->samples,level->nonzero,level->peak);
+    hlog(stdout,"V881_RENDER callbacks=%llu pcm_frames=%llu nonzero_samples=%llu silence_frames=%llu queued_frames=%u dropped_frames=%llu queue_running=%u query_status=%d route_ok=%d mode=%s\n",
         (unsigned long long)callbacks,(unsigned long long)submitted,(unsigned long long)nonzero,
         (unsigned long long)silence,queued,(unsigned long long)o->dropped,(unsigned)running,(int)status,route_ok,
         btps_v89_mode_name(g_output_mode));
@@ -411,7 +425,7 @@ static void stream(int fd) {
             int changed=__atomic_exchange_n(&interruption,0,__ATOMIC_ACQUIRE);
             if(changed) {
                 interrupted=changed==1;
-                fprintf(stdout,"V882_INTERRUPTION type=%s\n",interrupted?"began":"ended");fflush(stdout);
+                hlog(stdout,"V882_INTERRUPTION type=%s\n",interrupted?"began":"ended");fflush(stdout);
                 stop_output(o,s,interrupted?"interruption_began":"interruption_ended");btps_v88_decoder_reset(&decoder);
             }
             int settings_changed=0;
@@ -477,11 +491,11 @@ static void stream(int fd) {
     munmap(s,sizeof *s);close(file);
 }
 int BTPSV88StreamMain(void) {
-    fprintf(stdout,"V889_HELPER build=v8.9-output-select (v8.8.2 idle guard retained)\n");fflush(stdout);
+    hlog(stdout,"V889_HELPER build=v8.9.3-output-select (v8.8.2 idle guard retained)\n");fflush(stdout);
     int (*activate)(const char *,int **,size_t *)=dlsym(RTLD_DEFAULT,"launch_activate_socket");
     int *fds=NULL;size_t count=0;
     if(!activate || activate("Stream",&fds,&count) || !count) {
-        fprintf(stderr,"V88_SERVICE socket activation unavailable; run via launchd\n");free(fds);return 2;
+        hlog(stderr,"V88_SERVICE socket activation unavailable; run via launchd\n");free(fds);return 2;
     }
     int listener=fds[0];for(size_t i=1;i<count;i++) close(fds[i]);free(fds);
     for(;;) {

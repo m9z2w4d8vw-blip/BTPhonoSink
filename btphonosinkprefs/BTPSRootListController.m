@@ -70,13 +70,27 @@ static BOOL BTPSIsBuiltIn(NSString *type)
            [type isEqualToString:AVAudioSessionPortBuiltInReceiver];
 }
 
+// v8.9.3: say what kind of device it is, so the laptop's own Bluetooth connection is recognizable as an output.
+static NSString *BTPSTypeLabel(NSString *type)
+{
+    if ([type isEqualToString:AVAudioSessionPortBluetoothA2DP] || [type isEqualToString:AVAudioSessionPortBluetoothLE] ||
+        [type isEqualToString:AVAudioSessionPortBluetoothHFP]) return @"Bluetooth";
+    if ([type isEqualToString:AVAudioSessionPortHeadphones]) return @"wired";
+    if ([type isEqualToString:AVAudioSessionPortUSBAudio]) return @"USB";
+    if ([type isEqualToString:AVAudioSessionPortAirPlay]) return @"AirPlay";
+    if ([type isEqualToString:AVAudioSessionPortCarAudio]) return @"CarPlay";
+    return nil;
+}
+
 static NSString *BTPSOutputName(NSDictionary *output)
 {
     NSString *type = BTPSString(output[@"type"]);
     if ([type isEqualToString:AVAudioSessionPortBuiltInSpeaker]) return @"iPhone speaker";
     if ([type isEqualToString:AVAudioSessionPortBuiltInReceiver]) return @"iPhone earpiece";
     NSString *name = BTPSString(output[@"name"]);
-    return name.length ? name : @"(unnamed device)";
+    if (!name.length) name = @"(unnamed device)";
+    NSString *label = BTPSTypeLabel(type);
+    return label ? [NSString stringWithFormat:@"%@ (%@)", name, label] : name;
 }
 
 static NSString *BTPSOutputsDescription(id outputs)
@@ -171,7 +185,11 @@ static UIControl *BTPSFindControl(UIView *view)
     NSString *reason = BTPSString(helper[@"reason"]);
     if ([state isEqualToString:@"playing"]) {
         NSString *where = BTPSOutputsDescription(helper[@"outputs"]);
-        return where.length ? where : @"Playing";
+        if (!where.length) where = @"Playing";
+        id volume = helper[@"volume"];
+        if ([volume isKindOfClass:[NSNumber class]] && [volume doubleValue] < 0.05)
+            where = [where stringByAppendingString:@" - volume 0%"];
+        return where;
     }
     if ([state isEqualToString:@"waiting"]) return reason.length ? [@"Waiting: " stringByAppendingString:reason] : @"Waiting";
     return @"Not playing";

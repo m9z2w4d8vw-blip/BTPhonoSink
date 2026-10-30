@@ -1,4 +1,5 @@
-> Current version: **v8.9.2** (fixes Start; see [TESTING-v8.9.2.md](TESTING-v8.9.2.md)), on top of
+> Current version: **v8.9.3** (complete logs; see [TESTING-v8.9.3.md](TESTING-v8.9.3.md)) on v8.9.2 (fixes Start;
+> see [TESTING-v8.9.2.md](TESTING-v8.9.2.md)), on top of
 > **v8.9 one-tap Start/Stop and audio output selection** ([TESTING-v8.9.md](TESTING-v8.9.md)). Settings > BTPhonoSink > **Start** now arms the trial and restarts
 > Bluetooth for you (no PowerShell), and **Audio output** chooses the speaker, headphones or any device.
 > The streaming design is v8.8's: [TESTING-v8.8.md](TESTING-v8.8.md) covers architecture, logs, and limits.
