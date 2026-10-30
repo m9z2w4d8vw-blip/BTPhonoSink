@@ -12,6 +12,7 @@
 - (NSArray *)specifiers;
 - (NSArray *)loadSpecifiersFromPlistName:(NSString *)plistName target:(id)target;
 - (void)reloadSpecifiers;
+- (void)reloadSpecifierID:(NSString *)specifierID;   // refreshes one row by its "id" in Root.plist
 @end
 
 @interface BTPSRootListController : PSListController

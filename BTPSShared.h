@@ -32,6 +32,22 @@
 #define BTPS_NOTIFY_V75_SBC "com.parv.btphonosink.v75.sbc.request"
 #define BTPS_KEY_V75_SBC "BTPhonoSinkV75SBCRequest"
 
+/* ---- v8.9: one-tap Start/Stop and audio output selection ---------------------------------------------------
+ * Start/Stop: Settings writes BTPS_KEY_V89_REQUEST and posts BTPS_NOTIFY_V89_SESSION. The tweak inside bluetoothd
+ * consumes the request, sets or clears the two existing one-shot switches and restarts its own process. The
+ * relaunched daemon reports the result under BTPS_STATUS_V89_SESSION, matched to the request by its nonce.
+ * Output: Settings stores the mode and a "never play to" list; BTPSAudioHelper reads them, re-reads them when
+ * BTPS_NOTIFY_V89_OUTPUT is posted, and publishes what is playing where under BTPS_KEY_V89_HELPER. */
+#define BTPS_KEY_V82_DECISIVE_ONCE "BTPhonoSinkV82DecisiveOnce"  /* same literal Tweak.xm consumes at launch */
+#define BTPS_NOTIFY_V89_SESSION    "com.parv.btphonosink.v89.session"
+#define BTPS_KEY_V89_REQUEST       "BTPhonoSinkV89SessionRequest" /* {action,nonce,time}; consumed by the tweak */
+#define BTPS_KEY_V89_PENDING       "BTPhonoSinkV89SessionPending" /* carried across the restart; consumed */
+#define BTPS_STATUS_V89_SESSION    "diag.v89.session"
+#define BTPS_NOTIFY_V89_OUTPUT     "com.parv.btphonosink.v89.output"
+#define BTPS_KEY_V89_OUTPUT_MODE   "BTPhonoSinkV89OutputMode"     /* "speaker" (default) | "headphones" | "any" */
+#define BTPS_KEY_V89_NEVER         "BTPhonoSinkV89NeverOutputs"   /* array of {uid,name}: never play there */
+#define BTPS_KEY_V89_HELPER        "BTPhonoSinkV89HelperStatus"   /* written by BTPSAudioHelper for Settings */
+
 /* ---- the 64-bit notification state word ---------------------------------------------------------------------
  * bit 0  tweak loaded in the daemon      bit 1  UUID matched the analysed build     bit 2  experiments enabled
  * bits 8-15  hooks installed             bits 16-23  hooks skipped/failed           bits 32-63  last event (unix secs) */

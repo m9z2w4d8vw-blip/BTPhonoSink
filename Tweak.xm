@@ -49,6 +49,8 @@
  * v7.8: disables additional Sink registration even if the old v7.7 preference is ON.
  *       Once six native Sources register, safely snapshots the AVDTP slot table
  *       and independently counts vacant entries. No table mutation or new SDP.
+ * v8.9: Settings > BTPhonoSink > Start/Stop arms or clears the same two one-shot switches and restarts this
+ *       daemon from inside (BTPSV89Session.c). Audio output selection lives in BTPSAudioHelper only.
  */
 #include <CoreFoundation/CoreFoundation.h>
 #include <mach-o/dyld.h>
@@ -75,10 +77,14 @@
 #include "BTPSV82SDP.h"
 #include "BTPSV88Daemon.h"
 #include "BTPSV88Control.h"
+#include "BTPSV89Session.h"
 #include <pthread.h>
 #include <ptrauth.h>
 
 #define BTPS_BUILD_TAG "v8.8-continuous-sbc-ring"
+/* v8.9 keeps the v8.8 build label, as v8.8.1 and v8.8.2 did; this separate tag identifies the one-tap
+ * Start/Stop build in the status block (diag.v89.build) and the log. */
+#define BTPS_V89_BUILD_TAG "v8.9-one-tap-output-select"
 
 /* AVDTP constants, used for native Source registration diagnostics */
 #define BTPS_AVDTP_TSEP_SRC 0u
@@ -297,6 +303,10 @@ static volatile uint64_t g_v86_start_sig_cid = 0;
 static volatile unsigned g_v86_sink_stream_started = 0;
 static volatile uint64_t g_v86_sink_sig_cid = 0;
 static volatile uint64_t g_v86_sink_media_cid = 0;
+/* v8.9: the PC's AVDTP signaling channel, learned from its SET_CONFIGURATION for our Sink SEID 7. Once known,
+ * only that channel can start or stop the forwarded stream, so signaling with other devices (for example
+ * earbuds now used as the audio output) can never toggle it, even if their SEID happens to match. */
+static volatile uint64_t g_v89_sink_sig_cid = 0;
 
 
 /* SetConfigInd x2 is the native stream handle; x3/x4 are local/remote
@@ -324,6 +334,8 @@ static uint64_t hook_setconfigind(uint64_t a0,uint64_t a1,uint64_t a2,uint64_t a
 static void btps_v88_note_signal(unsigned direction,uint64_t cid,const uint8_t *p,size_t size)
 {
     if (!g_v88_ready || !g_v82_sink_accepted) return;
+    uint64_t sink_cid=__atomic_load_n(&g_v89_sink_sig_cid,__ATOMIC_ACQUIRE);
+    if (sink_cid && cid!=sink_cid) return;
     pthread_mutex_lock(&g_v88_control_lock);
     int change=btps_v88_signal(&g_v88_control,direction,cid,p,size);
     if(change>=0) {
@@ -757,8 +769,12 @@ static uint64_t btps_v82_receive_signal(uint64_t cid, uint64_t ptr, uint64_t len
 {
     uint32_t n = __sync_add_and_fetch(&g_v82_sig_calls, 1);
     uint8_t control[1024];
-    if(length>=2u && length<=sizeof control && btps_peek(ptr,control,(size_t)length))
+    if(length>=2u && length<=sizeof control && btps_peek(ptr,control,(size_t)length)) {
+        if(length>=4u && (control[0]&3u)==0u && ((control[0]>>2)&3u)==0u &&
+           (control[1]&63u)==3u && (control[2]>>2)==7u)
+            __atomic_store_n(&g_v89_sink_sig_cid,cid,__ATOMIC_RELEASE);
         btps_v88_note_signal(0,cid,control,(size_t)length);
+    }
     if (length >= 2u && length <= 1024u) {
         uint8_t h[2];
         if (btps_peek(ptr, h, 2)) {
@@ -1606,11 +1622,21 @@ static void install_hooks(uintptr_t base, int uuid_ok)
     BTPSLogNow("hooks: %u installed, %u not installed", ok, bad);
 }
 
+/* v8.9: everything the live Sink path needs was installed at launch (registration itself happens later). */
+static int btps_v89_receive_ready(void)
+{
+    return g_v82_armed && g_v88_ready && g_v87_media_hook_ok && g_v83_source_reg_hook_ok &&
+           g_v82_signal_hook_ok && g_v82_tx_hook_ok && g_v82_sdp_hook_ok;
+}
+
 %ctor {
     const char *prog = getprogname();
     if (!prog || strcmp(prog, "bluetoothd") != 0) return;      /* the filter plist should guarantee this; be paranoid */
 
     BTPSLogInit();
+    BTPSV89SessionStart();   /* v8.9: Settings Start/Stop works even if every hook below is refused */
+    BTPSSetStatus("diag.v89.build", "%s", BTPS_V89_BUILD_TAG);
+    BTPSLog("V89 build %s: Start/Stop from Settings; output selection in BTPSAudioHelper", BTPS_V89_BUILD_TAG);
     BTPSLogNow("BTPhonoSink %s loaded into %s pid %d (built %s %s)", BTPS_BUILD_TAG, prog, (int)getpid(), __DATE__, __TIME__);
     BTPSSetStatus("build", "%s, %s %s", BTPS_BUILD_TAG, __DATE__, __TIME__);
     BTPSSetStatus("pid", "%d", (int)getpid());
@@ -1649,6 +1675,7 @@ static void install_hooks(uintptr_t base, int uuid_ok)
         BTPSLogNow("no MH_EXECUTE image found: no hooks will be installed");
         BTPSSetStatus("image.match", "NO - main executable not found, hooks disabled");
         BTPSSetSummary(1u, 0u, 0u, (unsigned)BTPS_N_HOOKS);
+        BTPSV89SessionReport(0, 0);
         return;
     }
 
@@ -1685,4 +1712,5 @@ static void install_hooks(uintptr_t base, int uuid_ok)
         BTPSSetStatus("diag.v74_ipc", "DISABLED: exact daemon UUID and baseline hooks required");
         BTPSSetStatus("diag.v75_sbc", "DISABLED: exact daemon UUID and baseline hooks required");
     }
+    BTPSV89SessionReport(g_v82_armed, btps_v89_receive_ready());
 }

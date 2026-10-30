@@ -127,15 +127,22 @@ int main(void) {
 
     def test_speaker_route_and_teardown_guards(self):
         source = SOURCE.read_text()
-        configure = source.split("static int configure_speaker(", 1)[1].split("static int start_output(", 1)[0]
+        # The speaker path is unchanged since v8.8.1 and is still the only PlayAndRecord configuration.
+        configure = source.split("static int configure_speaker(", 1)[1].split("static int configure_external(", 1)[0]
         self.assertIn("AVAudioSessionCategoryPlayAndRecord", configure)
         self.assertIn("AVAudioSessionCategoryOptionDefaultToSpeaker", configure)
         self.assertIn("overrideOutputAudioPort:AVAudioSessionPortOverrideSpeaker", configure)
+        self.assertIn("!speaker_selected(session)", configure)
+        self.assertEqual(source.count("AVAudioSessionCategoryPlayAndRecord"), 1)
         for option in ("AllowBluetooth", "AllowBluetoothA2DP", "AllowAirPlay"):
             self.assertNotIn("AVAudioSessionCategoryOption" + option, source)
+        # v8.9: the speaker remains the default branch of the output dispatcher.
+        dispatch = source.split("static int configure_output(", 1)[1].split("static int start_output(", 1)[0]
+        self.assertIn("g_output_mode==BTPS_V89_MODE_SPEAKER?configure_speaker(rate,s)", dispatch)
+        self.assertIn("static int g_output_mode=BTPS_V89_MODE_SPEAKER;", source)
         start = source.split("static int start_output(", 1)[1].split("} PCMLevels;", 1)[0]
-        self.assertLess(start.index("configure_speaker(rate,s)"), start.index("AudioQueueNewOutput("))
-        self.assertLess(start.index("!speaker_selected(session)"), start.index("AudioQueueStart("))
+        self.assertLess(start.index("configure_output(rate,s)"), start.index("AudioQueueNewOutput("))
+        self.assertLess(start.index("route_verdict(session,NULL)"), start.index("AudioQueueStart("))
         stop = source.split("static void stop_output(", 1)[1].split("static int speaker_selected(", 1)[0]
         self.assertLess(stop.index("&o->stopping,1"), stop.index("AudioQueueStop("))
         self.assertLess(stop.index("AudioQueueDispose("), stop.index("&o->error,0"))

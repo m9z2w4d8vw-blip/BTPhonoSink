@@ -40,6 +40,128 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
+			<string>Bluetooth speaker</string>
+			<key>footerText</key>
+			<string>Start turns on the speaker experiment for one Bluetooth session: it sets the two one-shot switches at the bottom of this page and restarts Bluetooth for you, so no PowerShell command is needed. AirPods and other devices reconnect by themselves. Then connect from your PC and choose this iPhone as its audio output. After a reboot or any Bluetooth restart, tap Start again. Stop restarts Bluetooth normally.</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>Start</string>
+			<key>action</key>
+			<string>startSink:</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>Stop and restore normal Bluetooth</string>
+			<key>action</key>
+			<string>stopSink:</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSTitleValueCell</string>
+			<key>label</key>
+			<string>Session</string>
+			<key>get</key>
+			<string>sessionValue:</string>
+			<key>id</key>
+			<string>session</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Audio output</string>
+			<key>footerText</key>
+			<string>iPhone speaker always uses the built-in speaker (the tested default). Headphones or earbuds plays only on wired, USB or Bluetooth headphones and waits while none is the current output. Any device plays wherever iOS is playing. For both, pick the device with Choose output device or in Control Center. Because the PC is also connected over Bluetooth, iOS can list it as an output, and playing there is silent: if Playing on shows your PC, tap Never play to current device once.</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSLinkListCell</string>
+			<key>detail</key>
+			<string>PSListItemsController</string>
+			<key>label</key>
+			<string>Play audio on</string>
+			<key>defaults</key>
+			<string>com.apple.bluetooth</string>
+			<key>key</key>
+			<string>BTPhonoSinkV89OutputMode</string>
+			<key>default</key>
+			<string>speaker</string>
+			<key>validValues</key>
+			<array>
+				<string>speaker</string>
+				<string>headphones</string>
+				<string>any</string>
+			</array>
+			<key>validTitles</key>
+			<array>
+				<string>iPhone speaker</string>
+				<string>Headphones or earbuds</string>
+				<string>Any device (follow iOS)</string>
+			</array>
+			<key>shortTitles</key>
+			<array>
+				<string>iPhone speaker</string>
+				<string>Headphones</string>
+				<string>Any device</string>
+			</array>
+			<key>staticTextMessage</key>
+			<string>Changes apply right away, even while audio is playing. Headphones or earbuds waits if none is connected. Any device plays wherever iOS is playing; choose it in Control Center or with Choose output device.</string>
+			<key>PostNotification</key>
+			<string>com.parv.btphonosink.v89.output</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>Choose output device...</string>
+			<key>action</key>
+			<string>chooseOutput:</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSTitleValueCell</string>
+			<key>label</key>
+			<string>Playing on</string>
+			<key>get</key>
+			<string>playingValue:</string>
+			<key>id</key>
+			<string>playing</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>Never play to current device</string>
+			<key>action</key>
+			<string>neverPlayCurrent:</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSTitleValueCell</string>
+			<key>label</key>
+			<string>Never play to</string>
+			<key>get</key>
+			<string>neverValue:</string>
+			<key>id</key>
+			<string>never</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>Clear never-play list</string>
+			<key>action</key>
+			<string>clearNeverPlay:</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
 			<string>Debug log</string>
 		</dict>
 		<dict>
@@ -147,16 +269,24 @@
 			<false/>
 		</dict>
 		<dict>
-			<key>cell</key><string>PSGroupCell</string>
-			<key>label</key><string>v8.8 continuous audio experiment</string>
-			<key>footerText</key><string>One-restart private-stack test. Requires BOTH this switch and seven-slot one-shot ON before restart. v8.8 forwards SBC to a separate audio helper after START is accepted. Both switches reset OFF before changes. Test at moderate volume; export the debug log and restart Bluetooth with switches OFF to end the trial.</string>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>v8.8 continuous audio experiment</string>
+			<key>footerText</key>
+			<string>Manual alternative to the Start button at the top, which does all of this for you. Requires BOTH this switch and seven-slot one-shot ON before restart. v8.8 forwards SBC to a separate audio helper after START is accepted. Both switches reset OFF before changes. Test at moderate volume; export the debug log and restart Bluetooth with switches OFF (or tap Stop) to end the trial.</string>
 		</dict>
 		<dict>
-			<key>cell</key><string>PSSwitchCell</string>
-			<key>label</key><string>Arm real Sink SDP + signaling ONCE</string>
-			<key>defaults</key><string>com.apple.bluetooth</string>
-			<key>key</key><string>BTPhonoSinkV82DecisiveOnce</string>
-			<key>default</key><false/>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>label</key>
+			<string>Arm real Sink SDP + signaling ONCE</string>
+			<key>defaults</key>
+			<string>com.apple.bluetooth</string>
+			<key>key</key>
+			<string>BTPhonoSinkV82DecisiveOnce</string>
+			<key>default</key>
+			<false/>
 		</dict>
 	</array>
 	<key>title</key>

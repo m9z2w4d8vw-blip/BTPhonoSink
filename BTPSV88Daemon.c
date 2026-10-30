@@ -81,7 +81,7 @@ static void drain_logs(BTPSV88Shared *s,BTPSV882Health *health,uint64_t now) {
         else if(e.kind==BTPS_V881_RENDER)
             BTPSLogNow("V881_RENDER callbacks=%d pcm_frames=%u silence_frames=%u",e.result,e.frames,e.bytes);
         else if(e.kind==BTPS_V881_ROUTE)
-            BTPSLogNow("V881_ROUTE built_in_speaker=%u volume_pct=%u rate=%u",(unsigned)(e.result==0),e.bytes,e.frames);
+            BTPSLogNow("V881_ROUTE route_ok=%u volume_pct=%u rate=%u",(unsigned)(e.result==0),e.bytes,e.frames);
         else BTPSLogNow("V88_AUDIO status=%d rate=%u (0=started 1=stopped; errors are OSStatus)",e.result,e.frames);
     }
 }

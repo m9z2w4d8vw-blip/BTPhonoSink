@@ -1,5 +1,7 @@
-> Current experiment: **v8.8 continuous SBC audio**. See [TESTING-v8.8.md](TESTING-v8.8.md)
-> for installation, one-shot controls, logs, architecture, and device-test limits.
+> Current version: **v8.9 one-tap Start/Stop and audio output selection**. See
+> [TESTING-v8.9.md](TESTING-v8.9.md). Settings > BTPhonoSink > **Start** now arms the trial and restarts
+> Bluetooth for you (no PowerShell), and **Audio output** chooses the speaker, headphones or any device.
+> The streaming design is v8.8's: [TESTING-v8.8.md](TESTING-v8.8.md) covers architecture, logs, and limits.
 > Earlier sections below describe previous research stages.
 
 # BTPhonoSink v8.2 — opt-in native A2DP Sink signaling research
