@@ -73,7 +73,7 @@
     NSMutableAttributedString *text = [[NSMutableAttributedString alloc] init];
     [text appendAttributedString:[[NSAttributedString alloc] initWithString:@"Speaka\n" attributes:heading]];
     [text appendAttributedString:[[NSAttributedString alloc] initWithString:
-        @"The companion app for the BTPhonoSink tweak, which turns this iPhone into a Bluetooth speaker for your PC.\n\n"
+        @"The app for the Speaka tweak, which turns this iPhone into a Bluetooth speaker for your PC.\n\n"
         attributes:body]];
     [text appendAttributedString:[[NSAttributedString alloc] initWithString:@"User interface\n" attributes:heading]];
     [text appendAttributedString:[[NSAttributedString alloc] initWithString:

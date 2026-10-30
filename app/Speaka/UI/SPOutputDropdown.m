@@ -15,7 +15,6 @@
 
 @interface SPOutputDropdown ()
 @property (nonatomic) SPActionMenuButton *headerButton;
-@property (nonatomic) UILabel *valueLabel;
 @property (nonatomic) UIImageView *chevronView;
 @property (nonatomic) UIView *optionsClip;
 @property (nonatomic) UIStackView *optionsStack;
@@ -38,15 +37,22 @@
         self.translatesAutoresizingMaskIntoConstraints = NO;
         self.clipsToBounds = YES;
 
-        // The button: "Audio output", the current choice on the right, and a chevron that turns over.
+        // The button: "Audio output" with the current choice as its subtitle, and a chevron that turns over. The
+        // choice is part of the button's own configuration, so it can never overlap the title, whatever the width.
         __weak __typeof__(self) weakSelf = self;
-        UIAction *toggle = [UIAction actionWithTitle:@"Audio output"
-                                               image:[UIImage systemImageNamed:@"speaker.wave.2" withConfiguration:[SPGlobalAppearance smallIconImageConfiguration]]
-                                          identifier:@"output"
-                                             handler:^(__kindof UIAction *action) {
+        UIAction *toggle = [UIAction actionWithHandler:^(__kindof UIAction *action) {
             [weakSelf setExpanded:!weakSelf.expanded animated:YES];
         }];
-        self.headerButton = [SPActionMenuButton buttonWithAction:toggle chevron:NO];
+        UIImage *speaker = [UIImage systemImageNamed:@"speaker.wave.2" withConfiguration:[SPGlobalAppearance smallIconImageConfiguration]];
+        self.headerButton = [SPActionMenuButton buttonWithTitle:@"Audio output" image:speaker action:toggle chevron:NO];
+        UIButtonConfiguration *headerConfiguration = self.headerButton.configuration;
+        headerConfiguration.titleAlignment = UIButtonConfigurationTitleAlignmentLeading;
+        headerConfiguration.titlePadding = 2;
+        NSDirectionalEdgeInsets headerInsets = headerConfiguration.contentInsets;
+        headerInsets.trailing = 34;   // room for the chevron, which sits on top of the button
+        headerConfiguration.contentInsets = headerInsets;
+        headerConfiguration.subtitleTextAttributesTransformer = [SPOutputDropdown subtitleAttributes];
+        self.headerButton.configuration = headerConfiguration;
         self.headerButton.translatesAutoresizingMaskIntoConstraints = NO;
         self.headerButton.bottomSeparator = YES;
         self.headerButton.accessibilityHint = @"Shows where the audio can play";
@@ -59,14 +65,6 @@
         self.chevronView.tintColor = [UIColor colorWithWhite:1 alpha:0.6];
         self.chevronView.userInteractionEnabled = NO;
         [self.headerButton addSubview:self.chevronView];
-
-        self.valueLabel = [[UILabel alloc] init];
-        self.valueLabel.translatesAutoresizingMaskIntoConstraints = NO;
-        self.valueLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightRegular];
-        self.valueLabel.textColor = [UIColor colorWithWhite:1 alpha:0.6];
-        self.valueLabel.textAlignment = NSTextAlignmentRight;
-        self.valueLabel.userInteractionEnabled = NO;
-        [self.headerButton addSubview:self.valueLabel];
 
         // The list it turns into: one row per output, revealed by growing the clip view's height.
         self.optionsClip = [[UIView alloc] init];
@@ -92,9 +90,6 @@
             [self.headerButton.heightAnchor constraintEqualToConstant:self.rowHeight],
             [self.chevronView.trailingAnchor constraintEqualToAnchor:self.headerButton.trailingAnchor constant:-10],
             [self.chevronView.centerYAnchor constraintEqualToAnchor:self.headerButton.centerYAnchor],
-            [self.valueLabel.trailingAnchor constraintEqualToAnchor:self.chevronView.leadingAnchor constant:-8],
-            [self.valueLabel.centerYAnchor constraintEqualToAnchor:self.headerButton.centerYAnchor],
-            [self.valueLabel.widthAnchor constraintLessThanOrEqualToAnchor:self.headerButton.widthAnchor multiplier:0.45],
             [self.optionsClip.topAnchor constraintEqualToAnchor:self.headerButton.bottomAnchor],
             [self.optionsClip.leadingAnchor constraintEqualToAnchor:self.leadingAnchor],
             [self.optionsClip.trailingAnchor constraintEqualToAnchor:self.trailingAnchor],
@@ -125,12 +120,7 @@
     configuration.titleAlignment = UIButtonConfigurationTitleAlignmentLeading;
     configuration.titlePadding = 2;
     configuration.contentInsets = NSDirectionalEdgeInsetsMake(6, 18, 6, 34);   // indented; room for the checkmark
-    configuration.subtitleTextAttributesTransformer = ^NSDictionary<NSAttributedStringKey, id> *(NSDictionary<NSAttributedStringKey, id> *attributes) {
-        NSMutableDictionary<NSAttributedStringKey, id> *changed = attributes.mutableCopy;
-        changed[NSForegroundColorAttributeName] = [UIColor colorWithWhite:1 alpha:0.6];
-        changed[NSFontAttributeName] = [UIFont systemFontOfSize:12 weight:UIFontWeightRegular];
-        return changed;
-    };
+    configuration.subtitleTextAttributesTransformer = [SPOutputDropdown subtitleAttributes];
     row.configuration = configuration;
     row.translatesAutoresizingMaskIntoConstraints = NO;
     row.bottomSeparator = YES;   // the list is always followed by another row of the menu
@@ -150,6 +140,17 @@
     ]];
     self.checkmarks[key] = check;
     self.optionRows[key] = row;
+}
+
+// Subtitles in the menu: smaller and dimmer than the titles.
++ (UIConfigurationTextAttributesTransformer)subtitleAttributes
+{
+    return ^NSDictionary<NSAttributedStringKey, id> *(NSDictionary<NSAttributedStringKey, id> *attributes) {
+        NSMutableDictionary<NSAttributedStringKey, id> *changed = attributes.mutableCopy;
+        changed[NSForegroundColorAttributeName] = [UIColor colorWithWhite:1 alpha:0.6];
+        changed[NSFontAttributeName] = [UIFont systemFontOfSize:12 weight:UIFontWeightRegular];
+        return changed;
+    };
 }
 
 - (void)choose:(NSString *)key
@@ -176,7 +177,9 @@
         self.checkmarks[key].hidden = !selected;
         SPActionMenuButton *row = self.optionRows[key];
         if (selected) {
-            self.valueLabel.text = mode[@"shortTitle"];
+            UIButtonConfiguration *configuration = self.headerButton.configuration;
+            configuration.subtitle = mode[@"title"];
+            self.headerButton.configuration = configuration;
             self.headerButton.accessibilityValue = mode[@"title"];
             row.accessibilityTraits |= UIAccessibilityTraitSelected;
         } else {

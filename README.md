@@ -19,10 +19,10 @@ iOS audio output.
 It is an experimental tweak that modifies a system daemon through private internals, and it supports exactly one `bluetoothd` build
 (see [Requirements](#requirements)).
 
-**About the name.** The project and this repository are called Speaka. On the phone it keeps its original name, **BTPhonoSink**:
-that is the package ID (`com.parv.btphonosink`), the Settings page, and the name of every file it installs. Renaming those would
-make the package manager treat it as a different tweak, so an upgrade could leave two copies hooking Bluetooth, and its settings
-would reset.
+**About the name.** Everything you see is called Speaka: the package in Sileo, the page in Settings, the app and the
+release files. Underneath, the package ID stays `com.parv.btphonosink`, and so do the internal file and setting names.
+That way each new version installs over the one you have and keeps your settings. Renaming those would make the
+package manager treat it as a different tweak, so an upgrade could leave two copies hooking Bluetooth.
 
 ## Contents
 
@@ -56,16 +56,16 @@ two things:
 - the first four instructions of every function it touches.
 
 On any mismatch it logs the reason and hooks nothing, so an unsupported build means "no speaker", not a crashing Bluetooth daemon.
-Settings > BTPhonoSink > Status and the first block of the debug log (`hooks installed: 5 / 5`) show whether it loaded.
+Settings > Speaka > Status and the first block of the debug log (`hooks installed: 5 / 5`) show whether it loaded.
 
 ## Install and uninstall
 
 Download the `.deb` from the [**nightly** pre-release](https://github.com/m9z2w4d8vw-blip/Speaka/releases). It is rebuilt from
-`main` on every push; check your download against its `SHA256SUMS`. Each workflow run's `BTPhonoSink-deb` artifact works too.
+`main` on every push; check your download against its `SHA256SUMS`. Each workflow run's `Speaka-deb` artifact works too.
 Open the `.deb` with Sileo or Zebra, or install it over SSH:
 
 ```sh
-sudo dpkg -i com.parv.btphonosink_*.deb
+sudo dpkg -i Speaka_*.deb
 ```
 
 The install script does three things:
@@ -74,7 +74,7 @@ The install script does three things:
 - creates `/tmp/FTABHarvest`;
 - restarts `bluetoothd` once, so the new build is the one running.
 
-Your Bluetooth devices reconnect within a few seconds, and Settings gains a **BTPhonoSink** page. Installing alone does not turn the
+Your Bluetooth devices reconnect within a few seconds, and Settings gains a **Speaka** page. Installing alone does not turn the
 speaker on; tap **Start** for that.
 
 To remove it, uninstall the package, which also unloads the helper, and then restart Bluetooth to unload the tweak from the running
@@ -89,7 +89,7 @@ sudo killall -9 bluetoothd
 
 ### Start, connect, stop
 
-Open **Settings > BTPhonoSink** and tap **Start**. The tweak arms a one-time speaker session and restarts Bluetooth itself, with no
+Open **Settings > Speaka** (or the Speaka app) and tap **Start**. The tweak arms a one-time speaker session and restarts Bluetooth itself, with no
 command line needed. After a few seconds **Session** reads `On - connect from your PC`.
 
 On the PC, pair with the iPhone (Windows: Settings > Bluetooth & devices > Add device > Bluetooth) and choose it as the sound output.
@@ -143,7 +143,7 @@ compressed SBC fixtures sent from `bluetoothd`. None of them involve the PC.
 ## The Speaka app
 
 Speaka also has its own app, so you don't have to dig through Settings. It is a TrollStore app with a user interface
-adapted from Dopamine. It does the same as the BTPhonoSink Settings page:
+adapted from Dopamine. It does the same as the Speaka page in Settings:
 
 - **Start** and **Stop** for the speaker, with Bluetooth's restart shown in the button;
 - **Audio output**, a menu that unfolds into iPhone speaker, Wired headphones or earbuds, and Any device;
@@ -156,7 +156,7 @@ To install it, download `Speaka.tipa` or `Speaka.ipa` from the same
 [**nightly** pre-release](https://github.com/m9z2w4d8vw-blip/Speaka/releases) as the `.deb`. They are the same file
 under two names, and each workflow run's `Speaka-app` artifact has both too. Open it with TrollStore, which supports
 iOS 17.0. Sideloading it with AltStore or Sideloadly installs it, but without the permissions it needs to control the
-tweak. The BTPhonoSink package must be installed too: the app only controls the tweak. Details and the
+tweak. The Speaka package (the `.deb`) must be installed too: the app only controls the tweak. Details and the
 file map are in [app/README.md](app/README.md).
 
 ## Troubleshooting
@@ -232,7 +232,7 @@ Offline helpers in `tools/`:
  PC (A2DP source)
    |  Bluetooth: AVDTP signaling + SBC media
    v
- bluetoothd + BTPhonoSink tweak                   Settings > BTPhonoSink
+ bluetoothd + Speaka tweak                        Settings > Speaka
    |  hooks verified against one exact build          |  preferences (com.apple.bluetooth)
    |  7th AVDTP endpoint: Sink SEID 7 + SDP 0x110B     |  + Darwin notifications
    |  media callback -> lock-free shared ring          |
@@ -362,7 +362,7 @@ Every push runs `.github/workflows/build.yml` on `macos-15`, with Xcode's iPhone
 2. runs the whole test suite;
 3. builds with `make clean package FINALPACKAGE=1`;
 4. checks the package's contents;
-5. uploads it as the `BTPhonoSink-deb` artifact, kept for 14 days.
+5. uploads it as the `Speaka-deb` artifact (published as `Speaka_<version>_iphoneos-arm64.deb`), kept for 14 days.
 
 A separate job, **Build the Speaka app**, builds and checks `Speaka.tipa` and `Speaka.ipa` (the same package under
 two names) and uploads them as the `Speaka-app` artifact. The release then carries both next to the `.deb`, with all
@@ -379,7 +379,8 @@ You need macOS with Xcode and [Theos](https://theos.dev):
 ```sh
 export THEOS=~/theos
 bash tools/fetch_google_sbc.sh        # Google libsbc at the pinned commit -> btpsaudiohelper/vendor_sbc/
-make clean package FINALPACKAGE=1     # -> packages/com.parv.btphonosink_*.deb (rootless, arm64 + arm64e)
+make clean package FINALPACKAGE=1     # -> packages/com.parv.btphonosink_*.deb (rootless, arm64 + arm64e;
+                                      #    CI publishes it as Speaka_<version>_iphoneos-arm64.deb)
 make -C app tipa FINALPACKAGE=1       # -> app/packages/Speaka.tipa and Speaka.ipa (the companion app)
 ```
 

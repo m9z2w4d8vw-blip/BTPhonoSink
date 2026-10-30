@@ -1,4 +1,4 @@
-# Build, test and publish Speaka (the BTPhonoSink tweak).
+# Build, test and publish Speaka: the tweak (.deb) and the app (.tipa/.ipa).
 #
 #   push to any branch         -> build + package + verify
 #   push to main               -> ...and publish the .deb to the rolling "nightly" pre-release
@@ -182,7 +182,12 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          cp packages/*.deb dist/
+          # Published as Speaka_<version>_<arch>.deb. dpkg reads the package ID from inside the file, so it still
+          # installs over earlier com.parv.btphonosink packages.
+          for deb in packages/*.deb; do
+            name="$(basename "$deb")"
+            cp "$deb" "dist/Speaka_${name#*_}"
+          done
           ( cd dist && shasum -a 256 *.deb > SHA256SUMS && cat SHA256SUMS )
           {
             echo "### Build ${GITHUB_RUN_NUMBER}"
@@ -195,7 +200,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: BTPhonoSink-deb
+          name: Speaka-deb
           path: dist/*
           if-no-files-found: error
           retention-days: 14
@@ -284,7 +289,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8
         with:
-          name: BTPhonoSink-deb
+          name: Speaka-deb
           path: dist
 
       - name: Add the Speaka app

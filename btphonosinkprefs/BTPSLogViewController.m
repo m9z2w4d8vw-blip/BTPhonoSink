@@ -167,7 +167,7 @@
     fmt.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
     fmt.dateFormat = @"yyyy-MM-dd_HH-mm-ss";
     NSString *suffix = [[[NSUUID UUID] UUIDString] substringToIndex:8];
-    NSString *filename = [NSString stringWithFormat:@"BTPhonoSink-%@-%@.txt",
+    NSString *filename = [NSString stringWithFormat:@"Speaka-%@-%@.txt",
                           [fmt stringFromDate:[NSDate date]], suffix];
     NSURL *fileURL = [[NSURL fileURLWithPath:NSTemporaryDirectory() isDirectory:YES]
                       URLByAppendingPathComponent:filename];
@@ -230,7 +230,7 @@
        sources ? @"PASS" : @"CHECK", legacyOff ? @"PASS" : @"CHECK",
        probe ? @"PASS" : @"NOT ENABLED", sdpsource ? @"PASS" : @"NOT SEEN",
        sbc ? @"PASS" : @"NOT YET SEEN", daemonArmed ? @"PASS" : @"NOT ARMED",sbcArmed?@"PASS":@"NOT ARMED",capacityResult, allocatorMeasured?@"READ-ONLY MEASURED":@"NOT READABLE/PENDING"];
-    [self showMessage:check title:@"BTPhonoSink test checklist"];
+    [self showMessage:check title:@"Speaka test checklist"];
 }
 
 - (void)confirmAudioTest

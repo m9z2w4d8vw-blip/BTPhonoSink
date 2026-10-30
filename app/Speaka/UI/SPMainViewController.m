@@ -109,7 +109,7 @@ static NSString *const SPSeparator = @"  \u00B7  ";   // "  ·  " between the pa
     // Header
     self.headerView = [[SPHeaderView alloc] initWithTitle:@"Speaka" subtitles:@[
         [SPGlobalAppearance mainSubtitleString:@"Bluetooth speaker for your PC"],
-        [SPGlobalAppearance secondarySubtitleString:@"Looking for the BTPhonoSink tweak..."],
+        [SPGlobalAppearance secondarySubtitleString:@"Looking for the Speaka tweak..."],
     ]];
     [stackView addArrangedSubview:self.headerView];
 
@@ -219,13 +219,13 @@ static NSString *const SPSeparator = @"  \u00B7  ";   // "  ·  " between the pa
 {
     NSString *line;
     if (status.session == SPSessionNoTweak)
-        line = @"BTPhonoSink tweak not detected";
+        line = @"Speaka tweak not detected";
     else if (status.session == SPSessionOldTweak)
-        line = @"BTPhonoSink: restart Bluetooth to finish installing";
+        line = @"Tweak updated: restart Bluetooth to finish installing";
     else if (status.build.length)
-        line = [NSString stringWithFormat:@"BTPhonoSink %@", [status.build componentsSeparatedByString:@"-"].firstObject];
+        line = [NSString stringWithFormat:@"Tweak %@", [status.build componentsSeparatedByString:@"-"].firstObject];
     else
-        line = @"BTPhonoSink";
+        line = @"Tweak running";
     if ([line isEqualToString:self.headerLine])
         return;
     self.headerLine = line;
@@ -288,10 +288,10 @@ static NSString *const SPSeparator = @"  \u00B7  ";   // "  ·  " between the pa
         text = [@"Speaker not started" stringByAppendingFormat:@"%@%@", SPSeparator, status.detail];
     } else if (status.session == SPSessionNoTweak) {
         symbol = @"exclamationmark.triangle";
-        text = [@"The BTPhonoSink tweak is not running" stringByAppendingFormat:@"%@install it, then open Speaka again", SPSeparator];
+        text = [@"The Speaka tweak is not running" stringByAppendingFormat:@"%@install it, then open Speaka again", SPSeparator];
     } else if (status.session == SPSessionOldTweak) {
         symbol = @"exclamationmark.triangle";
-        text = [@"Bluetooth still runs an older BTPhonoSink" stringByAppendingFormat:@"%@restart Bluetooth once to finish installing", SPSeparator];
+        text = [@"Bluetooth still runs an older Speaka tweak" stringByAppendingFormat:@"%@restart Bluetooth once to finish installing", SPSeparator];
     } else {
         text = [@"Speaker is off" stringByAppendingFormat:@"%@tap Start to turn this iPhone into a Bluetooth speaker", SPSeparator];
     }
@@ -321,15 +321,15 @@ static NSString *const SPSeparator = @"  \u00B7  ";   // "  ·  " between the pa
         return;
     SPStatus *status = [[SPTweakClient sharedClient] readStatus];
     if (status.session == SPSessionNoTweak) {
-        [self alertWithTitle:@"BTPhonoSink is not running"
-                     message:@"Speaka controls the BTPhonoSink tweak, which runs inside the Bluetooth daemon, and it has "
-                             @"not reported anything yet. Install the BTPhonoSink package; its install script restarts "
+        [self alertWithTitle:@"The Speaka tweak is not running"
+                     message:@"The app controls the Speaka tweak, which runs inside the Bluetooth daemon, and the tweak has "
+                             @"not reported anything yet. Install the Speaka package; its install script restarts "
                              @"Bluetooth once. Then open Speaka again."];
         return;
     }
     if (status.session == SPSessionOldTweak) {
         [self alertWithTitle:@"Restart Bluetooth once to finish installing"
-                     message:@"Bluetooth is still running the BTPhonoSink version it started with, which has no Start "
+                     message:@"Bluetooth is still running the Speaka tweak version it started with, which has no Start "
                              @"button, so nothing would answer. Restart the Bluetooth daemon once: reinstalling the "
                              @"package does it automatically, or run your usual sudo killall -9 bluetoothd command, or "
                              @"use Reboot Userspace in Dopamine. After that, Start works.\n\n"
@@ -373,7 +373,7 @@ static NSString *const SPSeparator = @"  \u00B7  ";   // "  ·  " between the pa
     if (![[SPTweakClient sharedClient] setOutputMode:mode]) {
         self.outputChangeDate = nil;
         [self alertWithTitle:@"Could not change the output"
-                     message:@"The setting could not be saved. Try again, or use Settings > BTPhonoSink."];
+                     message:@"The setting could not be saved. Try again, or use Settings > Speaka."];
         [self refresh];
     }
 }

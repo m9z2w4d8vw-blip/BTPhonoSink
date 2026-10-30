@@ -198,6 +198,52 @@ class SpeakaApp(unittest.TestCase):
         self.assertIn("sudo dpkg -i ${deb_name}", release)
         self.assertIn('if [ -f dist/Speaka.tipa ] && [ -f dist/Speaka.ipa ]; then', release)
 
+    def test_everything_the_user_sees_is_called_speaka(self):
+        control = read(ROOT / "control")
+        self.assertIn("Name: Speaka\n", control)
+        self.assertIn("Package: com.parv.btphonosink\n", control)   # unchanged: upgrades install in place
+        entry = plistlib.loads((ROOT / "layout/Library/PreferenceLoader/Preferences/BTPhonoSinkPrefs.plist").read_bytes())
+        self.assertEqual(entry["entry"]["label"], "Speaka")
+        root = plistlib.loads((ROOT / "btphonosinkprefs/Resources/Root.plist").read_bytes())
+        self.assertEqual(root["title"], "Speaka")
+        for name, pixels in (("icon.png", 29), ("icon@2x.png", 58), ("icon@3x.png", 87)):
+            self.assertEqual(png_size(ROOT / "btphonosinkprefs/Resources" / name), (pixels, pixels))
+        for line in read(ROOT / "layout/DEBIAN/postinst").splitlines():
+            if line.strip().startswith("echo '"):
+                self.assertTrue(line.strip().startswith("echo 'Speaka: "), line)
+        # No visible string in the app or the Settings bundle still says BTPhonoSink (identifiers may).
+        for source in list(SOURCES) + sorted((ROOT / "btphonosinkprefs").glob("*.m")):
+            for literal in re.findall(r'@"([^"]*)"', read(source)):
+                if "BTPhonoSink" in literal:
+                    self.assertRegex(literal, r"^BTPhonoSink(V\d|Prefs|Status|Log|Experiments|SDPProbe)\w*$",
+                                     f"{source.name}: {literal}")
+        workflow = read(ROOT / ".github/workflows/build.yml")
+        self.assertIn('cp "$deb" "dist/Speaka_${name#*_}"', workflow)
+        self.assertEqual(workflow.count("name: Speaka-deb\n"), 2)       # uploaded by build, downloaded by release
+        self.assertNotIn("BTPhonoSink-deb", workflow)
+
+    def test_buttons_whose_text_changes_keep_it_in_their_configuration(self):
+        # With a primary action UIKit re-applies the action's title, so "Start" never became "Running".
+        button = read(APP / "Speaka/UI/SPActionMenuButton.m")
+        factory = button.split("+ (SPActionMenuButton *)buttonWithTitle:", 1)[1].split("\n}\n", 1)[0]
+        self.assertIn("configuration.title = title;", factory)
+        self.assertIn("primaryAction:nil", factory)
+        self.assertIn("[button addAction:action forControlEvents:UIControlEventTouchUpInside];", factory)
+        big = read(APP / "Speaka/UI/SPBigButton.m")
+        self.assertIn("[SPActionMenuButton buttonWithTitle:action.title image:action.image action:action chevron:NO]", big)
+        self.assertNotIn("buttonWithAction:", big)
+        set_title = big.split("- (void)setTitle:(NSString *)title symbolName:", 1)[1].split("\n}\n", 1)[0]
+        self.assertIn("configuration.title = title;", set_title)
+
+    def test_output_menu_header_shows_the_choice_as_its_subtitle(self):
+        dropdown = read(APP / "Speaka/UI/SPOutputDropdown.m")
+        self.assertNotIn("valueLabel", dropdown)                       # the label that overlapped the title
+        self.assertIn('[SPActionMenuButton buttonWithTitle:@"Audio output" image:speaker action:toggle chevron:NO]', dropdown)
+        self.assertIn("headerInsets.trailing = 34;", dropdown)          # the title never runs under the chevron
+        update = dropdown.split("- (void)updateSelection", 1)[1].split("\n}\n", 1)[0]
+        self.assertIn('configuration.subtitle = mode[@"title"];', update)
+        self.assertIn("self.headerButton.configuration = configuration;", update)
+
     def test_objective_c_is_structurally_sound(self):
         include_dirs = [APP / d for d in ("Speaka", "Speaka/Model", "Speaka/UI", "Speaka/UI/Transition")] + [ROOT]
         for source in SOURCES:

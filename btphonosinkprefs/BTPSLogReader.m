@@ -241,7 +241,7 @@ static NSString *HelperText(id value)
     NSMutableString *out = [NSMutableString string];
     NSDateFormatter *fmt = [[NSDateFormatter alloc] init];
     fmt.dateFormat = @"HH:mm:ss";
-    [out appendFormat:@"BTPhonoSink debug log - read at %@\n\n", [fmt stringFromDate:[NSDate date]]];
+    [out appendFormat:@"Speaka debug log - read at %@\n\n", [fmt stringFromDate:[NSDate date]]];
 
     NSUInteger hookCount = 0;
     for (NSString *key in s.status) {

@@ -248,7 +248,7 @@ static UIControl *BTPSFindControl(UIView *view)
     if (self.pendingNonce) return;     // one request at a time
     if (![self daemonHasSessionListener]) {
         [self alertWithTitle:@"Restart Bluetooth once to finish installing"
-                     message:@"Bluetooth is still running the BTPhonoSink version it started with, which has no Start "
+                     message:@"Bluetooth is still running the Speaka tweak version it started with, which has no Start "
                              @"button, so nothing would answer. Restart the Bluetooth daemon once: reinstalling this "
                              @"package does it automatically, or run your usual sudo killall -9 bluetoothd command, or "
                              @"use Reboot Userspace in Dopamine. After that, Start works without the PC.\n\n"

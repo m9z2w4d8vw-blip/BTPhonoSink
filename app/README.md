@@ -1,6 +1,6 @@
 # Speaka app
 
-The companion app for the BTPhonoSink tweak. It offers:
+The app for the Speaka tweak. It offers:
 
 - **Start** and **Stop** for the speaker;
 - an **Audio output** menu that unfolds into the three outputs;
@@ -24,13 +24,13 @@ CI builds it in its own job, **Build the Speaka app**, and uploads both files as
 release attaches them next to the tweak's `.deb`. If the app fails to build, the release goes out without it rather than not at
 all.
 
-To install, open `Speaka.tipa` or `Speaka.ipa` with TrollStore. The BTPhonoSink package must be installed as well:
+To install, open `Speaka.tipa` or `Speaka.ipa` with TrollStore. The Speaka tweak package (`.deb`) must be installed as well:
 the app only controls the tweak. Sideloading it with AltStore or Sideloadly would strip its two entitlements, and
 without them it cannot reach the tweak.
 
 ## How it talks to the tweak
 
-Exactly like Settings > BTPhonoSink, through the `com.apple.bluetooth` preferences and the Darwin notifications in
+Exactly like Settings > Speaka, through the `com.apple.bluetooth` preferences and the Darwin notifications in
 [`BTPSShared.h`](../BTPSShared.h). This needs two entitlements, `platform-application` and
 `com.apple.private.security.no-sandbox`, and nothing else.
 

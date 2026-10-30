@@ -32,7 +32,7 @@
         self.layer.cornerCurve = kCACornerCurveContinuous;
         self.translatesAutoresizingMaskIntoConstraints = NO;
 
-        self.button = [SPActionMenuButton buttonWithAction:action chevron:NO];
+        self.button = [SPActionMenuButton buttonWithTitle:action.title image:action.image action:action chevron:NO];
         [self.button setContentHorizontalAlignment:UIControlContentHorizontalAlignmentCenter];
         self.button.translatesAutoresizingMaskIntoConstraints = NO;
         [self addSubview:self.button];

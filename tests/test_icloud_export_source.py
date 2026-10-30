@@ -21,7 +21,7 @@ class ICloudExportTests(unittest.TestCase):
     def test_full_report_is_used(self):
         self.assertIn('[[BTPSLogReader shared] fullText]', UI)
         self.assertIn('log writeToURL:fileURL atomically:YES encoding:NSUTF8StringEncoding', UI)
-        self.assertIn('@"BTPhonoSink-%@-%@.txt"', UI)
+        self.assertIn('@"Speaka-%@-%@.txt"', UI)
 
     def test_user_selects_location(self):
         self.assertIn('picker.delegate = self;', UI)

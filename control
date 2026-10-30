@@ -1,8 +1,8 @@
 Package: com.parv.btphonosink
-Name: BTPhonoSink
+Name: Speaka
 Version: 0.1.0
 Architecture: iphoneos-arm64
-Description: Experimental one-shot A2DP Sink with shared-memory SBC streaming and separate-process audio playback
+Description: Turns this iPhone into a Bluetooth speaker for your PC. Control it with the Speaka app or in Settings > Speaka.
 Author: Parv
 Section: Tweaks
 Depends: mobilesubstrate, preferenceloader, firmware (>= 14.0)

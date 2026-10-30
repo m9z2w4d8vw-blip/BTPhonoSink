@@ -21,6 +21,25 @@
 {
     SPActionMenuButton *button = [SPActionMenuButton buttonWithConfiguration:[SPGlobalAppearance defaultButtonConfiguration]
                                                                primaryAction:action];
+    [button setUpWithChevron:chevron];
+    return button;
+}
+
++ (SPActionMenuButton *)buttonWithTitle:(NSString *)title image:(UIImage *)image action:(UIAction *)action chevron:(BOOL)chevron
+{
+    UIButtonConfiguration *configuration = [SPGlobalAppearance defaultButtonConfiguration];
+    configuration.title = title;
+    configuration.image = image;
+    SPActionMenuButton *button = [SPActionMenuButton buttonWithConfiguration:configuration primaryAction:nil];
+    [button addAction:action forControlEvents:UIControlEventTouchUpInside];
+    [button setUpWithChevron:chevron];
+    return button;
+}
+
+// The rest of Dopamine's buttonWithAction:chevron:, shared by both constructors.
+- (void)setUpWithChevron:(BOOL)chevron
+{
+    SPActionMenuButton *button = self;
     [button.titleLabel setAdjustsFontSizeToFitWidth:YES];
     [button setContentHorizontalAlignment:UIControlContentHorizontalAlignmentLeft];
     if ([SPGlobalAppearance isRTL])
@@ -41,7 +60,6 @@
 
     button.feedbackGenerator = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
     [button addTarget:button action:@selector(buttonPressed) forControlEvents:UIControlEventTouchUpInside];
-    return button;
 }
 
 - (void)buttonPressed
