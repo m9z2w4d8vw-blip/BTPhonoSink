@@ -34,6 +34,7 @@ static BTPSV893Tally g_v893_tally;
 static uint64_t g_v893_window_ms;
 static BTPSV88Event g_v893_pending_pcm;     /* the helper sends PCM then RENDER; they are logged as one line */
 static int g_v893_have_pcm;
+static unsigned g_v894_health_why;          /* last helper reason bits; 0 = playing or an older helper (no reason) */
 static int v893_detail_allowed(void) {
     if(g_v893_tally.details<BTPS_V893_DETAILS_PER_WINDOW) {g_v893_tally.details++;return 1;}
     g_v893_tally.held_back++;return 0;
@@ -115,8 +116,10 @@ static void drain_logs(BTPSV88Shared *s,BTPSV882Health *health,uint64_t now) {
     for(unsigned i=0;i<BTPS_V88_EVENTS;i++) {
         if(!btps_v88_pop(&s->decode_log,s->decoded,sizeof s->decoded[0],
                         BTPS_V88_EVENTS,&e,sizeof e)) break;
-        if(e.kind==BTPS_V882_HEALTH)
+        if(e.kind==BTPS_V882_HEALTH) {
             btps_v882_health_render(health,e.bytes,e.frames,e.result==1,now);
+            g_v894_health_why=e.result<0?(unsigned)(-(int64_t)e.result):0u;
+        }
         else if(e.kind==BTPS_V88_DECODE) {
             g_v893_tally.decoded++;g_v893_tally.decode_frames+=e.frames;
             if(e.result==0) g_v893_tally.decode_ok++;
@@ -200,11 +203,13 @@ static void *worker(void *arg) {
         }
         __atomic_store_n(&g_health_deadline_ms,ready?now+500u:0,__ATOMIC_RELEASE);
         if(ready!=last_ready) {
-            BTPSLogNow("V882_HEALTH ready=%d generation=%llu connected=%d playing=%u media_age_ms=%lld heartbeat_age_ms=%lld render_age_ms=%lld",
+            /* v8.9.4 why= bits from the helper: 0x1 stream inactive, 0x2 no queue, 0x4 queue not running,
+             * 0x8 stopping, 0x10 enqueue error, 0x20 route not acceptable for the selected mode. */
+            BTPSLogNow("V882_HEALTH ready=%d generation=%llu connected=%d playing=%u media_age_ms=%lld heartbeat_age_ms=%lld render_age_ms=%lld why=0x%x",
                 ready,(unsigned long long)(generation>>1),fd>=0,health.playing,
                 health.media_seen?(long long)(now-health.media_ms):-1ll,
                 health.heartbeat_seen?(long long)(now-health.heartbeat_ms):-1ll,
-                health.render_seen?(long long)(now-health.render_ms):-1ll);
+                health.render_seen?(long long)(now-health.render_ms):-1ll,g_v894_health_why);
             last_ready=ready;
         }
         if(++ticks%50==0) {

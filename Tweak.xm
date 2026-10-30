@@ -84,7 +84,7 @@
 #define BTPS_BUILD_TAG "v8.8-continuous-sbc-ring"
 /* v8.9 keeps the v8.8 build label, as v8.8.1 and v8.8.2 did; this separate tag identifies the one-tap
  * Start/Stop build in the status block (diag.v89.build) and the log. */
-#define BTPS_V89_BUILD_TAG "v8.9.3-one-tap-output-select"
+#define BTPS_V89_BUILD_TAG "v8.9.4-one-tap-output-select"
 
 /* AVDTP constants, used for native Source registration diagnostics */
 #define BTPS_AVDTP_TSEP_SRC 0u

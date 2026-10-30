@@ -113,9 +113,10 @@ static int speaker_selected(AVAudioSession *session) {
 static btps_v89_kind port_kind(NSString *type) {
     if([type isEqualToString:AVAudioSessionPortBuiltInSpeaker]) return BTPS_V89_PORT_SPEAKER;
     if([type isEqualToString:AVAudioSessionPortBuiltInReceiver]) return BTPS_V89_PORT_RECEIVER;
-    if([type isEqualToString:AVAudioSessionPortHeadphones] || [type isEqualToString:AVAudioSessionPortUSBAudio] ||
-       [type isEqualToString:AVAudioSessionPortBluetoothA2DP] || [type isEqualToString:AVAudioSessionPortBluetoothLE] ||
-       [type isEqualToString:AVAudioSessionPortBluetoothHFP]) return BTPS_V89_PORT_HEADPHONES;
+    if([type isEqualToString:AVAudioSessionPortHeadphones] || [type isEqualToString:AVAudioSessionPortUSBAudio])
+        return BTPS_V89_PORT_HEADPHONES;
+    if([type isEqualToString:AVAudioSessionPortBluetoothA2DP] || [type isEqualToString:AVAudioSessionPortBluetoothLE] ||
+       [type isEqualToString:AVAudioSessionPortBluetoothHFP]) return BTPS_V89_PORT_BLUETOOTH;
     return BTPS_V89_PORT_OTHER;
 }
 static NSString *text_field(id item,NSString *key) {
@@ -243,7 +244,8 @@ static int configure_speaker(unsigned rate,BTPSV88Shared *s) {
     }
     return 0;
 }
-/* v8.9 headphones / any device. The Playback category lets iOS use wired, USB, Bluetooth and AirPlay outputs -
+/* v8.9 "any device" mode (headphones mode used this until v8.9.4; see configure_wired). The Playback category lets
+ * iOS use wired, USB, Bluetooth and AirPlay outputs -
  * whatever is picked in Control Center - so no Bluetooth or AirPlay category option is needed or used. The route
  * is checked BEFORE activation, so iOS never starts output on a refused device such as the sending PC, and again
  * after activation. Returns -2 when the route is refused (the caller retries slowly), -1 on other failures. */
@@ -273,7 +275,54 @@ static int configure_external(unsigned rate,BTPSV88Shared *s) {
     log_route(session,"configured",rate,s);
     return 0;
 }
+/* True when every current output is the built-in speaker or earpiece (and there is at least one). */
+static int builtin_only(AVAudioSession *session) {
+    NSArray<AVAudioSessionPortDescription *> *outputs=session.currentRoute.outputs;
+    if(!outputs.count) return 0;
+    for(AVAudioSessionPortDescription *port in outputs) {
+        btps_v89_kind kind=port_kind(port.portType);
+        if(kind!=BTPS_V89_PORT_SPEAKER && kind!=BTPS_V89_PORT_RECEIVER) return 0;
+    }
+    return 1;
+}
+/* v8.9.4 headphones mode: PlayAndRecord with NO Bluetooth option. Bluetooth outputs - including the sending PC, which
+ * iOS lists as an A2DP output and picks because it connected last - are not eligible at all, and a plugged-in wired
+ * or USB headset always wins, so earbuds work without replugging. No DefaultToSpeaker: with nothing plugged in the
+ * route is the earpiece, which the policy refuses, so this mode never falls back to the loudspeaker. Any speaker
+ * override left by speaker mode is cleared. No input queue, microphone tap or recording is ever started. */
+static int configure_wired(unsigned rate,BTPSV88Shared *s) {
+    AVAudioSession *session=[AVAudioSession sharedInstance];NSError *error=nil;NSString *device=nil;
+    const char *stage="category";
+    BOOL ok=[session setCategory:AVAudioSessionCategoryPlayAndRecord mode:AVAudioSessionModeDefault options:0 error:&error];
+    if(ok) {
+        (void)[session overrideOutputAudioPort:AVAudioSessionPortOverrideNone error:NULL];
+        /* Before activating, only a built-in speaker/earpiece candidate is conclusive: nothing is plugged in, whether
+         * iOS reports this inactive session's own route or the system's. Refuse then without disturbing other audio.
+         * Any other candidate is not trusted - an inactive session may report the system route, e.g. the PC, which
+         * this category cannot reach - so activate (safe: no Bluetooth is possible) and verify the real route below. */
+        int verdict=route_verdict(session,&device);
+        if(verdict && builtin_only(session)) {note_refusal(session,"candidate",rate,s,verdict,device);return -2;}
+        stage="activate";ok=[session setActive:YES error:&error];
+    }
+    if(!ok) {
+        hlog(stderr,"V894_AUDIO_FAIL stage=%s domain=%s code=%ld error=%s\n",stage,
+            (error.domain?:@"unknown").UTF8String,(long)error.code,
+            (error.localizedDescription?:@"unknown").UTF8String);
+        [session setActive:NO error:NULL];
+        btps_v88_event(s,1,(BTPSV88Event){BTPS_V88_AUDIO,0,rate,-100});return -1;
+    }
+    /* Allow a bounded hardware-route transition on this helper worker only. */
+    for(unsigned i=0;i<20 && route_verdict(session,NULL);i++) usleep(10000);
+    int verdict=route_verdict(session,&device);
+    if(verdict) {
+        [session setActive:NO withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:NULL];
+        note_refusal(session,"configured",rate,s,verdict,device);return -2;
+    }
+    log_route(session,"configured",rate,s);
+    return 0;
+}
 static int configure_output(unsigned rate,BTPSV88Shared *s) {
+    if(g_output_mode==BTPS_V89_MODE_HEADPHONES) return configure_wired(rate,s);
     return g_output_mode==BTPS_V89_MODE_SPEAKER?configure_speaker(rate,s):configure_external(rate,s);
 }
 static int start_output(Output *o,unsigned rate,BTPSV88Shared *s) {
@@ -352,12 +401,17 @@ static void write_pcm(Output *o,const int16_t *pcm,unsigned frames) {
 static void report_health(Output *o,BTPSV88Shared *s,uint64_t generation) {
     UInt32 running=0,size=sizeof running;
     OSStatus status=o->queue?AudioQueueGetProperty(o->queue,kAudioQueueProperty_IsRunning,&running,&size):-1;
-    int playing=(generation&1u) && !status && running &&
-        !__atomic_load_n(&o->stopping,__ATOMIC_ACQUIRE) &&
-        !__atomic_load_n(&o->error,__ATOMIC_RELAXED) &&
-        !route_verdict([AVAudioSession sharedInstance],NULL);
+    /* v8.9.4: the reason bits travel as a negative result so the daemon can log them; 1 still means playing.
+     * 0x1 stream inactive, 0x2 no queue/query failed, 0x4 queue not running, 0x8 stopping, 0x10 enqueue error,
+     * 0x20 route not acceptable for the selected mode. */
+    unsigned why=0;
+    if(!(generation&1u)) why|=0x1u;
+    if(status) why|=0x2u; else if(!running) why|=0x4u;
+    if(__atomic_load_n(&o->stopping,__ATOMIC_ACQUIRE)) why|=0x8u;
+    if(__atomic_load_n(&o->error,__ATOMIC_RELAXED)) why|=0x10u;
+    if(route_verdict([AVAudioSession sharedInstance],NULL)) why|=0x20u;
     btps_v88_event(s,1,(BTPSV88Event){BTPS_V882_HEALTH,(uint32_t)generation,
-        (uint32_t)__atomic_load_n(&o->render_tick,__ATOMIC_RELAXED),playing?1:0});
+        (uint32_t)__atomic_load_n(&o->render_tick,__ATOMIC_RELAXED),why?-(int32_t)why:1});
 }
 static int read_exact(int fd,void *dst,size_t size) {
     uint8_t *p=dst;
@@ -407,10 +461,13 @@ static void stream(int fd) {
     uint64_t generation=0,doorbell=UINT64_MAX;
     unsigned idle=0,retry=0,diagnostic_ticks=0;BOOL interrupted=NO;
     PCMLevels level={0};
-    __block int interruption=0,route_changed=0;
+    __block int interruption=0,route_changed=0;__block long interruption_reason=-1;
     id observer=[[NSNotificationCenter defaultCenter] addObserverForName:AVAudioSessionInterruptionNotification
         object:nil queue:nil usingBlock:^(NSNotification *note) {
             unsigned type=[note.userInfo[AVAudioSessionInterruptionTypeKey] unsignedIntValue];
+            id reason=note.userInfo[@"AVAudioSessionInterruptionReasonKey"];
+            __atomic_store_n(&interruption_reason,[reason isKindOfClass:[NSNumber class]]?[reason longValue]:-1L,
+                             __ATOMIC_RELAXED);
             __atomic_store_n(&interruption,type==AVAudioSessionInterruptionTypeBegan?1:2,__ATOMIC_RELEASE);
         }];
     id route_observer=[[NSNotificationCenter defaultCenter] addObserverForName:AVAudioSessionRouteChangeNotification
@@ -425,7 +482,8 @@ static void stream(int fd) {
             int changed=__atomic_exchange_n(&interruption,0,__ATOMIC_ACQUIRE);
             if(changed) {
                 interrupted=changed==1;
-                hlog(stdout,"V882_INTERRUPTION type=%s\n",interrupted?"began":"ended");fflush(stdout);
+                hlog(stdout,"V882_INTERRUPTION type=%s reason=%ld\n",interrupted?"began":"ended",
+                     __atomic_load_n(&interruption_reason,__ATOMIC_RELAXED));fflush(stdout);
                 stop_output(o,s,interrupted?"interruption_began":"interruption_ended");btps_v88_decoder_reset(&decoder);
             }
             int settings_changed=0;
@@ -433,6 +491,7 @@ static void stream(int fd) {
                 load_output_settings();g_last_refusal=-1;
                 if(o->queue) {stop_output(o,s,"output_settings_changed");btps_v88_decoder_reset(&decoder);}
                 retry=0;
+                if(interrupted) {hlog(stdout,"V894_INTERRUPTION_CLEARED by=settings\n");interrupted=NO;}
             }
             if(__atomic_exchange_n(&route_changed,0,__ATOMIC_ACQUIRE)) {
                 AVAudioSession *session=[AVAudioSession sharedInstance];
@@ -446,6 +505,10 @@ static void stream(int fd) {
             uint64_t current=__atomic_load_n(&s->generation,__ATOMIC_ACQUIRE);
             if(current!=generation) {
                 stop_output(o,s,"stream_generation_changed");btps_v88_decoder_reset(&decoder);generation=current;retry=0;
+                /* v8.9.4: iOS does not always send "ended" (e.g. another app keeps playing), and interruptions are now
+                 * delivered. A new stream from the PC - pause/play there - is an explicit request for audio, so it
+                 * clears the interruption; if it still holds (a call), activation fails and the normal backoff applies. */
+                if(interrupted) {hlog(stdout,"V894_INTERRUPTION_CLEARED by=new_stream\n");interrupted=NO;}
                 if(!(current&1u)) publish_status(@"idle",@"PC paused or stopped the stream",NO);
             }
             int32_t audio_error=__atomic_exchange_n(&o->error,0,__ATOMIC_RELAXED);
@@ -482,6 +545,11 @@ static void stream(int fd) {
             if(diagnostic_ticks%200u==0 && ((generation&1u) || level.samples))
                 report_progress(o,&level,s);
         }
+        /* v8.9.4: this loop runs on the helper's main thread and never ran its run loop, and not one route change or
+         * interruption was handled in any session, although earbuds were plugged in during playback. If AVAudioSession
+         * delivers these through the main thread's run loop or main queue, they could never arrive. Draining it
+         * without blocking costs nothing if they arrive on another thread; the 5 ms doorbell cadence is kept. */
+        @autoreleasepool {CFRunLoopRunInMode(kCFRunLoopDefaultMode,0,true);}
         usleep(5000); /* shared-memory doorbell polling, <=5ms nominal wake latency */
     }
     [[NSNotificationCenter defaultCenter] removeObserver:observer];
@@ -491,7 +559,7 @@ static void stream(int fd) {
     munmap(s,sizeof *s);close(file);
 }
 int BTPSV88StreamMain(void) {
-    hlog(stdout,"V889_HELPER build=v8.9.3-output-select (v8.8.2 idle guard retained)\n");fflush(stdout);
+    hlog(stdout,"V889_HELPER build=v8.9.4-output-select (v8.8.2 idle guard retained)\n");fflush(stdout);
     int (*activate)(const char *,int **,size_t *)=dlsym(RTLD_DEFAULT,"launch_activate_socket");
     int *fds=NULL;size_t count=0;
     if(!activate || activate("Stream",&fds,&count) || !count) {

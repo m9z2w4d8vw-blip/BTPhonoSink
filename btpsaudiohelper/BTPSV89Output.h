@@ -5,11 +5,13 @@
  * this policy whether playback may start, or continue, on the current route.
  *
  *   speaker     exactly the iPhone's built-in speaker (the v8.8.1 behaviour, and the default)
- *   headphones  only wired, USB or Bluetooth headphones; waits if none is the current output
+ *   headphones  only WIRED or USB headphones/earbuds; waits if none is plugged in (v8.9.4: never Bluetooth)
  *   any         whatever iOS is using (Control Center / route picker), except devices on the never-play list
  *
- * The never-play list exists because the PC that sends the audio is itself connected over Bluetooth, so iOS can
- * list it as an output. Playing there is silent, so the user marks it once and the helper refuses it.
+ * Why headphones mode excludes Bluetooth (v8.9.4): the PC that sends the audio is itself connected over Bluetooth,
+ * so iOS lists it as an A2DP output, and because it connects last iOS routes to it. The 21:39 log showed every
+ * headphones-mode start going to LAPTOP-..., after which the PC closed the stream (5 s and 15 s later), and
+ * stopping that output made the phone send SUSPEND. The never-play list remains for "any" mode.
  */
 #pragma once
 #include <stddef.h>
@@ -22,7 +24,8 @@ typedef enum {
     BTPS_V89_PORT_OTHER = 0,      /* AirPlay, CarPlay, HDMI, line out, anything unknown */
     BTPS_V89_PORT_SPEAKER = 1,    /* built-in speaker */
     BTPS_V89_PORT_RECEIVER = 2,   /* built-in earpiece */
-    BTPS_V89_PORT_HEADPHONES = 3, /* wired, USB, Bluetooth A2DP / LE / HFP */
+    BTPS_V89_PORT_HEADPHONES = 3, /* wired or USB headphones / earbuds */
+    BTPS_V89_PORT_BLUETOOTH = 4,  /* Bluetooth A2DP / LE / HFP: includes the sending PC, which iOS lists as an output */
 } btps_v89_kind;
 
 typedef struct { btps_v89_kind kind; const char *uid; const char *name; } btps_v89_port;
@@ -95,7 +98,7 @@ static inline const char *btps_v89_route_reason(int code)
     case BTPS_V89_ROUTE_OK: return "ok";
     case BTPS_V89_ROUTE_NO_OUTPUT: return "no output";
     case BTPS_V89_ROUTE_NOT_SPEAKER: return "speaker not selected";
-    case BTPS_V89_ROUTE_NOT_HEADPHONES: return "no headphones connected";
+    case BTPS_V89_ROUTE_NOT_HEADPHONES: return "no wired headphones plugged in";
     case BTPS_V89_ROUTE_NEVER_LISTED: return "on the never-play list";
     default: return "unknown";
     }

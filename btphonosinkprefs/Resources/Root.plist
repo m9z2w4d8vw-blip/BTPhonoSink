@@ -76,7 +76,7 @@
 			<key>label</key>
 			<string>Audio output</string>
 			<key>footerText</key>
-			<string>iPhone speaker always uses the built-in speaker (the tested default). Headphones or earbuds plays only on wired, USB or Bluetooth headphones and waits while none is the current output. Any device plays wherever iOS is playing. For both, pick the device with Choose output device or in Control Center. Because the PC is also connected over Bluetooth, iOS can list it as an output, and playing there is silent: if Playing on shows your PC, tap Never play to current device once.</string>
+			<string>iPhone speaker always uses the built-in speaker. Wired headphones or earbuds plays on whatever is plugged into the iPhone (wired or USB), even if your PC connected later, and waits while nothing is; it never uses Bluetooth, so the sound can't go back to your PC. Any device plays wherever iOS is playing, including Bluetooth earbuds: pick them with Choose output device or in Control Center. Your PC is also a Bluetooth audio device and usually connected last, so iOS often picks it; if Playing on shows your PC, tap Never play to current device once.</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -100,17 +100,17 @@
 			<key>validTitles</key>
 			<array>
 				<string>iPhone speaker</string>
-				<string>Headphones or earbuds</string>
+				<string>Wired headphones or earbuds</string>
 				<string>Any device (follow iOS)</string>
 			</array>
 			<key>shortTitles</key>
 			<array>
 				<string>iPhone speaker</string>
-				<string>Headphones</string>
+				<string>Wired headphones</string>
 				<string>Any device</string>
 			</array>
 			<key>staticTextMessage</key>
-			<string>Changes apply right away, even while audio is playing. Headphones or earbuds waits if none is connected. Any device plays wherever iOS is playing; choose it in Control Center or with Choose output device.</string>
+			<string>Changes apply right away, even while audio is playing. Wired headphones or earbuds waits until something is plugged in and never uses Bluetooth. Any device plays wherever iOS is playing; choose it in Control Center or with Choose output device.</string>
 			<key>PostNotification</key>
 			<string>com.parv.btphonosink.v89.output</string>
 		</dict>

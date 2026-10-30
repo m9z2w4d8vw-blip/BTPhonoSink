@@ -127,15 +127,20 @@ int main(void) {
 
     def test_speaker_route_and_teardown_guards(self):
         source = SOURCE.read_text()
-        # The speaker path is unchanged since v8.8.1 and is still the only PlayAndRecord configuration.
+        # The speaker path is unchanged since v8.8.1. v8.9.4 adds the only other PlayAndRecord configuration, wired
+        # headphones mode, with no options; neither can reach Bluetooth or AirPlay, and nothing ever records.
         configure = source.split("static int configure_speaker(", 1)[1].split("static int configure_external(", 1)[0]
         self.assertIn("AVAudioSessionCategoryPlayAndRecord", configure)
         self.assertIn("AVAudioSessionCategoryOptionDefaultToSpeaker", configure)
         self.assertIn("overrideOutputAudioPort:AVAudioSessionPortOverrideSpeaker", configure)
         self.assertIn("!speaker_selected(session)", configure)
-        self.assertEqual(source.count("AVAudioSessionCategoryPlayAndRecord"), 1)
+        self.assertEqual(source.count("AVAudioSessionCategoryPlayAndRecord"), 2)
+        wired = source.split("static int configure_wired(", 1)[1].split("static int configure_output(", 1)[0]
+        self.assertIn("setCategory:AVAudioSessionCategoryPlayAndRecord mode:AVAudioSessionModeDefault options:0", wired)
         for option in ("AllowBluetooth", "AllowBluetoothA2DP", "AllowAirPlay"):
             self.assertNotIn("AVAudioSessionCategoryOption" + option, source)
+        for api in ("AudioQueueNewInput", "requestRecordPermission", "setPreferredInput", "inputNode", "AVAudioRecorder"):
+            self.assertNotIn(api, source)
         # v8.9: the speaker remains the default branch of the output dispatcher.
         dispatch = source.split("static int configure_output(", 1)[1].split("static int start_output(", 1)[0]
         self.assertIn("g_output_mode==BTPS_V89_MODE_SPEAKER?configure_speaker(rate,s)", dispatch)

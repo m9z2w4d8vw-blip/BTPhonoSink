@@ -266,7 +266,7 @@ int main(void) {
 
     def test_helper_output_wiring(self):
         helper = read("btpsaudiohelper/BTPSV88Stream.m")
-        external = helper.split("static int configure_external(", 1)[1].split("static int configure_output(", 1)[0]
+        external = helper.split("static int configure_external(", 1)[1].split("static int builtin_only(", 1)[0]
         self.assertIn("AVAudioSessionCategoryPlayback", external)
         self.assertNotIn("PlayAndRecord", external)
         self.assertLess(external.index("route_verdict(session,&device)"), external.index("setActive:YES"))
@@ -284,7 +284,9 @@ int main(void) {
         status = status.split("static void log_route(", 1)[0]
         self.assertLess(status.index("dispatch_async(g_status_queue"), status.index("CFSTR(BTPS_KEY_V89_HELPER)"))
         health = helper.split("static void report_health(", 1)[1].split("static int read_exact(", 1)[0]
-        self.assertIn("!route_verdict([AVAudioSession sharedInstance],NULL)", health)
+        # v8.9.4: an unacceptable route is reported as reason bit 0x20 (any reason means "not playing").
+        self.assertIn("if(route_verdict([AVAudioSession sharedInstance],NULL)) why|=0x20u;", health)
+        self.assertIn("why?-(int32_t)why:1", health)
         # The render callback and level meter that test_v881 compiles must not depend on the new code.
         render = helper.split("#define PCM_CAPACITY", 1)[1].split("static void stop_output", 1)[0]
         for term in ("route_verdict", "publish_status", "g_output_mode", "NSString"):
