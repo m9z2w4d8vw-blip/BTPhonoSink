@@ -201,6 +201,68 @@ jobs:
           retention-days: 14
 
   # ---------------------------------------------------------------------------------------------
+  # The Speaka companion app (app/) as a TrollStore package. Separate from the tweak on purpose:
+  # if the app fails to build, the .deb and its release are not affected.
+  # ---------------------------------------------------------------------------------------------
+  app:
+    name: Build the Speaka app (.tipa for TrollStore)
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      HOMEBREW_NO_INSTALL_CLEANUP: '1'
+      HOMEBREW_NO_ENV_HINTS: '1'
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Select Xcode
+        run: |
+          XCODE=/Applications/Xcode_16.4.app
+          if [ -d "$XCODE" ]; then
+            sudo xcode-select -s "$XCODE/Contents/Developer"
+          else
+            echo "::warning::$XCODE not found, using the image default"
+          fi
+          xcodebuild -version
+
+      - name: Install build tools (GNU make, ldid)
+        run: |
+          brew install make ldid
+          echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
+
+      - name: Install Theos
+        run: |
+          git clone --quiet --recursive --depth=1 --shallow-submodules https://github.com/theos/theos.git "$HOME/theos"
+          echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
+
+      - name: Build Speaka.tipa
+        run: make -C app clean tipa FINALPACKAGE=1
+
+      - name: Check the package
+        run: |
+          set -euo pipefail
+          tipa=app/packages/Speaka.tipa
+          test -s "$tipa" || { echo "::error::$tipa was not built"; exit 1; }
+          rm -rf tipacheck && mkdir tipacheck && unzip -q "$tipa" -d tipacheck
+          bundle=tipacheck/Payload/Speaka.app
+          for f in Speaka Info.plist AppIcon60x60@2x.png AppIcon60x60@3x.png LICENSE-Dopamine.txt; do
+            test -s "$bundle/$f" || { echo "::error::$f is missing from Speaka.app"; exit 1; }
+          done
+          echo "Slices: $(lipo -archs "$bundle/Speaka")"
+          ldid -e "$bundle/Speaka" > entitlements.plist
+          grep -q 'com.apple.private.security.no-sandbox' entitlements.plist \
+            || { echo "::error::Speaka is not signed with its entitlements"; cat entitlements.plist; exit 1; }
+          plutil -p "$bundle/Info.plist" | grep -E 'CFBundleIdentifier|CFBundleShortVersionString'
+          echo "Package OK: $(du -h "$tipa" | cut -f1)"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Speaka-tipa
+          path: app/packages/Speaka.tipa
+          if-no-files-found: error
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------------------------
   # Publish. Only main and v* tags; only if the build job succeeded.
   # ---------------------------------------------------------------------------------------------
   release:

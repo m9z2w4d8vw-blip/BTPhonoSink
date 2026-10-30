@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Unsandboxed, like the Settings page: the app writes the tweak's com.apple.bluetooth preferences and posts
+	     the Darwin notifications the tweak listens for. TrollStore keeps these when it installs the app. -->
+	<key>platform-application</key>
+	<true/>
+	<key>com.apple.private.security.no-sandbox</key>
+	<true/>
+</dict>
+</plist>

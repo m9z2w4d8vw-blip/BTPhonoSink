@@ -29,6 +29,7 @@ would reset.
 - [Requirements](#requirements)
 - [Install and uninstall](#install-and-uninstall)
 - [Using it](#using-it)
+- [The Speaka app](#the-speaka-app)
 - [Troubleshooting](#troubleshooting)
 - [Logs and diagnostics](#logs-and-diagnostics)
 - [How it works](#how-it-works)
@@ -138,6 +139,22 @@ and because it connects last, iOS sends media to it. Fix it once:
 
 The debug log page also keeps the self-tests from the research stages: a 440 Hz output test, a PCM transfer to the helper, and
 compressed SBC fixtures sent from `bluetoothd`. None of them involve the PC.
+
+## The Speaka app
+
+Speaka also has its own app, so you don't have to dig through Settings. It is a TrollStore app with a user interface
+adapted from Dopamine. It does the same as the BTPhonoSink Settings page:
+
+- **Start** and **Stop** for the speaker, with Bluetooth's restart shown in the button;
+- **Audio output**, a menu that unfolds into iPhone speaker, Wired headphones or earbuds, and Any device;
+- a connection banner that scrolls to the right. It shows when your PC is connected and where the audio is playing,
+  for example *LAPTOP-XXXX connected · playing on iPhone speaker*.
+
+The app and the Settings page always agree, because they read and write the same settings.
+
+To install it, download `Speaka.tipa` from a workflow run's `Speaka-tipa` artifact and open it with TrollStore (which
+supports iOS 17.0). The BTPhonoSink package must be installed too: the app only controls the tweak. Details and the
+file map are in [app/README.md](app/README.md).
 
 ## Troubleshooting
 
@@ -314,6 +331,7 @@ The route policy is plain C in `BTPSV89Output.h` and is tested directly. The hel
 |-- btpsaudiohelper/            BTPSAudioHelper: decode and playback (Theos tool)
 |   `-- vendor_sbc/               Google libsbc, fetched at build time (only its README is committed)
 |-- btphonosinkprefs/           the Settings page (Theos bundle) and its Resources/
+|-- app/                        the Speaka app (Theos application, packaged as Speaka.tipa); see app/README.md
 |-- layout/                     files installed as-is: DEBIAN/postinst and prerm, the launchd job, PreferenceLoader entry
 |-- tests/                      the test suite (Python unittest; many tests compile the real C sources) and fixtures/
 |-- tools/                      offline scripts (see Logs and diagnostics)
@@ -343,6 +361,9 @@ Every push runs `.github/workflows/build.yml` on `macos-15`, with Xcode's iPhone
 4. checks the package's contents;
 5. uploads it as the `BTPhonoSink-deb` artifact, kept for 14 days.
 
+A separate job, **Build the Speaka app**, builds and checks `Speaka.tipa` and uploads it as the `Speaka-tipa`
+artifact. It runs alongside the tweak's job, so an app failure never affects the `.deb` or its release.
+
 Pushes to `main` then republish the rolling **nightly** pre-release. A tag such as `v0.2.0` publishes release `0.2.0`. Package
 versions are `control`'s `Version` plus the run number (`0.1.0.N`), so every build is newer than the last.
 
@@ -354,6 +375,7 @@ You need macOS with Xcode and [Theos](https://theos.dev):
 export THEOS=~/theos
 bash tools/fetch_google_sbc.sh        # Google libsbc at the pinned commit -> btpsaudiohelper/vendor_sbc/
 make clean package FINALPACKAGE=1     # -> packages/com.parv.btphonosink_*.deb (rootless, arm64 + arm64e)
+make -C app tipa FINALPACKAGE=1       # -> app/packages/Speaka.tipa (the companion app, for TrollStore)
 ```
 
 The build is rootless only: the install script and the launchd job use `/var/jb` paths. `BTPS_WITH_PREFS=0` skips the Settings
@@ -456,4 +478,6 @@ Reverse-engineering findings:
   `6e505650145c9973d08a0bdd5e5f5e1914305e40` and is not committed.
 - `sbc_decode.c` is the project's own SBC decoder, written from the Bluetooth specification. It is used by the tests and the fixture
   paths.
+- The Speaka app's user interface is adapted from [Dopamine](https://github.com/opa334/Dopamine) by Lars Fröder
+  (opa334) and its contributors, under the MIT License, which ships in the app and appears under **Credits**.
 - Built with [Theos](https://theos.dev). It runs on Dopamine with ElleKit and PreferenceLoader.
