@@ -61,7 +61,7 @@ class TestV78(unittest.TestCase):
         d=plistlib.loads((ROOT/'btphonosinkprefs/Resources/Root.plist').read_bytes())
         self.assertNotIn('BTPhonoSinkV77SinkTrial',[x.get('key') for x in d['items']])
     def test_pinned_disassembly_layout(self):
-        docs=(ROOT/'docs/V78_AVDTP_CAPACITY_FINDINGS.md').read_text()
+        docs=(ROOT/'docs/research/V78_AVDTP_CAPACITY_FINDINGS.md').read_text()
         for x in ['0xCEE14','0xCEE54','0xCEEE8','0x9768b0']:
             self.assertIn(x,docs)
 

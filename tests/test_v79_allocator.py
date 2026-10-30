@@ -85,7 +85,7 @@ class TestV79(unittest.TestCase):
             self.assertIn(offset, source)
         self.assertIn('v8.8-continuous-sbc-ring', source)
     def test_documented_limitations(self):
-        docs=(ROOT/'docs/V79_AVDTP_ALLOCATION_FINDINGS.md').read_text()
+        docs=(ROOT/'docs/research/V79_AVDTP_ALLOCATION_FINDINGS.md').read_text()
         for needle in ['0xCE428', '0xCE4F4', '0x984a60', 'NOT', 'no allocation']:
             self.assertIn(needle,docs)
 

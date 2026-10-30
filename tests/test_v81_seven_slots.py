@@ -79,7 +79,7 @@ class TrialTest(unittest.TestCase):
         self.assertIn('V81_LIVE RESULT',SRC)
         self.assertIn('g_v81_shadow_returned',SRC)
     def test_documents_disclose_no_sink_and_rollback(self):
-        docs=(ROOT/'TESTING-v8.1.md').read_text()
+        docs=(ROOT/'docs/history/TESTING-v8.1.md').read_text()
         for term in ('OFF','Legacy Sink','one-shot','v8.0','no Sink', 'slots=7'):
             self.assertIn(term,docs)
 if __name__=='__main__': unittest.main()

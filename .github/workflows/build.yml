@@ -1,4 +1,4 @@
-# Build, test and publish BTPhonoSink.
+# Build, test and publish Speaka (the BTPhonoSink tweak).
 #
 #   push to any branch         -> build + package + verify
 #   push to main               -> ...and publish the .deb to the rolling "nightly" pre-release
@@ -239,7 +239,7 @@ jobs:
             if gh release view "$tag" >/dev/null 2>&1; then
               gh release upload "$tag" dist/* --clobber                 # re-run of the same tag
             else
-              gh release create "$tag" dist/* --verify-tag --title "BTPhonoSink ${VERSION}" --generate-notes
+              gh release create "$tag" dist/* --verify-tag --title "Speaka ${VERSION}" --generate-notes
             fi
           else
             # ---- rolling pre-release "nightly": delete and recreate so the tag moves to this commit ----

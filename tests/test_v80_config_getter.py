@@ -39,7 +39,7 @@ class V80ConfigGetterObserver(unittest.TestCase):
         self.assertIn('btps_v79_snapshot_geometry();',SRC)
         self.assertIn('if (g_v80_enabled && g_v80_index3_calls == 0u)',SRC)
     def test_docs_disclose_limitations(self):
-        d=(ROOT/'TESTING-v8.0.md').read_text()
+        d=(ROOT/'docs/history/TESTING-v8.0.md').read_text()
         self.assertIn('No memory changes',d)
         self.assertIn('NO_INDEX3_CALL_OBSERVED',d)
         self.assertIn('Legacy Sink',d)

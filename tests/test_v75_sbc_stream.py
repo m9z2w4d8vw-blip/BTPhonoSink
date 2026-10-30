@@ -91,7 +91,12 @@ class SBCStreamTests(unittest.TestCase):
   self.assertIn('decisive_requested && g_v81_seven_armed && !BTPSExperimentsEnabled()',daemon)
   self.assertIn('g_native_source_success != 6',daemon)
   self.assertIn('btps_v78_snapshot_capacity();',daemon)
+  # The helper compiles the root copies through one-line includes, so the two can never drift apart.
   for file in ('BTPSIPCProtocol.c','BTPSV75RTP.c','BTPSMedia.c','sbc_decode.c'):
-   self.assertEqual((ROOT/file).read_bytes(),(ROOT/'btpsaudiohelper'/file).read_bytes())
+   self.assertTrue((ROOT/file).stat().st_size>100)
+   wrapper=(ROOT/'btpsaudiohelper'/file).read_text()
+   self.assertIn('#include "../%s"'%file,wrapper)
+   self.assertEqual([l for l in wrapper.splitlines() if l.strip() and not l.lstrip().startswith('/*')],
+                    ['#include "../%s"'%file])
 
 if __name__=='__main__':unittest.main()

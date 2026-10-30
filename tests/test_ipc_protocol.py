@@ -111,8 +111,12 @@ class IPCTests(unittest.TestCase):
         make=(ROOT/'Makefile').read_text()
         self.assertIn('SUBPROJECTS += btpsaudiohelper',make)
         self.assertIn('BTPSAudioHelper', (ROOT/'btpsaudiohelper/Makefile').read_text())
+        # Both subprojects compile the root copy through a one-line include, so the protocol cannot drift.
         for sub in ('btpsaudiohelper','btphonosinkprefs'):
-            self.assertEqual((ROOT/sub/'BTPSIPCProtocol.c').read_bytes(),(ROOT/'BTPSIPCProtocol.c').read_bytes())
+            wrapper=(ROOT/sub/'BTPSIPCProtocol.c').read_text()
+            self.assertEqual([l for l in wrapper.splitlines() if l.strip() and not l.lstrip().startswith('/*')],
+                             ['#include "../BTPSIPCProtocol.c"'])
+        self.assertIn('btps_ipc_',(ROOT/'BTPSIPCProtocol.c').read_text())
     def test_log_export_result(self):
         report=(ROOT/'btphonosinkprefs/BTPSLogReader.m').read_text()
         self.assertIn('V7.3 INTERPROCESS AUDIO TEST',report)
