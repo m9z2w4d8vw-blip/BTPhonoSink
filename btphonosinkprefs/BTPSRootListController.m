@@ -312,12 +312,30 @@ static UIControl *BTPSFindControl(UIView *view)
             return;
         }
     }
+    // The tweak reports this exact status when it armed the switches but could not spawn launchctl (sandbox).
+    // Bluetooth is still up and the switches are set, so the fix is a manual toggle, NOT a reinstall.
+    if (mine && [session containsString:@"auto-restart unavailable"]) {
+        [self finishSession:@"Almost there - restart Bluetooth"
+                    message:@"The speaker experiment is armed, but this build could not restart Bluetooth for you "
+                            @"on your device. Turn Bluetooth off and on in Settings (or Airplane Mode off/on), then "
+                            @"come back: the experiment runs on the next Bluetooth start. Nothing was broken."];
+        return;
+    }
     if (elapsed > (self.pendingRelaunched ? 45.0 : 25.0)) {
-        NSString *message = self.pendingRelaunched
-            ? @"Bluetooth restarted and the trial is armed, but the speaker registration has not been reported yet. "
-              @"Check the Session row in a few seconds, or open the debug log."
-            : @"No answer from the tweak inside Bluetooth. Check \"Loaded in daemon\" above. If it is not loaded, "
-              @"reinstall the package; the manual switches below still work.";
+        NSString *message;
+        if (self.pendingRelaunched) {
+            message = @"Bluetooth restarted and the trial is armed, but the speaker registration has not been "
+                      @"reported yet. Check the Session row in a few seconds, or open the debug log.";
+        } else if ([[BTPSLogReader shared] loadedSummary] && ![[[BTPSLogReader shared] loadedSummary] hasPrefix:@"No"]) {
+            // The tweak IS loaded (it wrote status), so it is not a packaging problem: the restart likely did not
+            // fire. Bluetooth may already be restarting, or may need a manual toggle. Do not advise reinstalling.
+            message = @"The experiment is armed, but Bluetooth has not confirmed the restart yet. If it does not "
+                      @"reconnect shortly, turn Bluetooth off and on (or Airplane Mode off/on). The manual switches "
+                      @"below also work. Nothing was broken.";
+        } else {
+            message = @"No answer from the tweak inside Bluetooth. Check \"Loaded in daemon\" above. If it is not "
+                      @"loaded, reinstall the package; the manual switches below still work.";
+        }
         [self finishSession:@"Still waiting" message:message];
         return;
     }
