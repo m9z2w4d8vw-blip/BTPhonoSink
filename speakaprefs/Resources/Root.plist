@@ -7,8 +7,6 @@
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
-			<key>footerText</key>
-			<string>Read from the tweak running inside the Bluetooth daemon. "No data yet" means the tweak has not written anything: it is not loaded, or the daemon's sandbox blocks every log channel.</string>
 			<key>label</key>
 			<string>Status</string>
 		</dict>
@@ -41,8 +39,6 @@
 			<string>PSGroupCell</string>
 			<key>label</key>
 			<string>Bluetooth speaker</string>
-			<key>footerText</key>
-			<string>Start turns on the speaker experiment for one Bluetooth session and restarts the Bluetooth daemon for you, so no PowerShell command is needed. AirPods and other devices reconnect by themselves. Then connect from your PC and choose this iPhone as its audio output. The speaker lasts until Bluetooth restarts: after a reboot, a userspace reboot, or turning Bluetooth or Airplane Mode off and on, tap Start again. Stop restarts Bluetooth normally.</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -75,8 +71,6 @@
 			<string>PSGroupCell</string>
 			<key>label</key>
 			<string>Audio output</string>
-			<key>footerText</key>
-			<string>iPhone speaker always uses the built-in speaker. Wired headphones or earbuds plays on whatever is plugged into the iPhone (wired or USB), even if your PC connected later, and waits while nothing is; it never uses Bluetooth, so the sound can't go back to your PC. Any device plays wherever iOS is playing, including Bluetooth earbuds: pick them with Choose output device or in Control Center. Your PC is also a Bluetooth audio device and usually connected last, so iOS often picks it; if Playing on shows your PC, tap Never play to current device once.</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -124,42 +118,6 @@
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>PSTitleValueCell</string>
-			<key>label</key>
-			<string>Playing on</string>
-			<key>get</key>
-			<string>playingValue:</string>
-			<key>id</key>
-			<string>playing</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSButtonCell</string>
-			<key>label</key>
-			<string>Never play to current device</string>
-			<key>action</key>
-			<string>neverPlayCurrent:</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSTitleValueCell</string>
-			<key>label</key>
-			<string>Never play to</string>
-			<key>get</key>
-			<string>neverValue:</string>
-			<key>id</key>
-			<string>never</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSButtonCell</string>
-			<key>label</key>
-			<string>Clear never-play list</string>
-			<key>action</key>
-			<string>clearNeverPlay:</string>
-		</dict>
-		<dict>
-			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
 			<string>Debug log</string>
@@ -191,8 +149,6 @@
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
-			<key>footerText</key>
-			<string>The v7.7 Sink trial returned 0x68 and is retired. v7.8 only reads endpoint occupancy. Legacy Sink is inactive. Live reception and SDP 0x110B are not implemented.</string>
 			<key>label</key>
 			<string>Experiments</string>
 		</dict>
@@ -211,8 +167,6 @@
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
-			<key>footerText</key>
-			<string>OFF by default. When ON, the next bluetoothd launch adds an experimental read-only observer for existing SDP record additions. It never adds Sink services or endpoints. Restart bluetoothd once after changing. Switch OFF and restart if instability occurs.</string>
 			<key>label</key>
 			<string>Optional SDP registration diagnostics</string>
 		</dict>
@@ -233,8 +187,6 @@
 			<string>PSGroupCell</string>
 			<key>label</key>
 			<string>v8.0 init lookup observation</string>
-			<key>footerText</key>
-			<string>OFF by default. Advanced test: installs an additional pass-through hook on the private AVDTP config getter on the next bluetoothd launch. Never changes its result or allocates endpoints. Only enable after confirming headphone playback; disable and restart if Bluetooth becomes unstable.</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -253,8 +205,6 @@
 			<string>PSGroupCell</string>
 			<key>label</key>
 			<string>v8.1: One-time capacity test</string>
-			<key>footerText</key>
-			<string>Advanced, potentially disruptive. Default OFF. If armed, next bluetoothd restart consumes this switch before attempting to change AVDTP initializer count from 6 to 7 using a persistent shadow config. NO Sink endpoint is registered. Verify headphone behavior and export log, then check switch reset OFF. Recovery: turn OFF and restart daemon or reinstall v8.0.</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -273,8 +223,6 @@
 			<string>PSGroupCell</string>
 			<key>label</key>
 			<string>v8.8 continuous audio experiment</string>
-			<key>footerText</key>
-			<string>Manual alternative to the Start button at the top, which does all of this for you. Requires BOTH this switch and seven-slot one-shot ON before restart. v8.8 forwards SBC to a separate audio helper after START is accepted. Both switches reset OFF before changes. Test at moderate volume; export the debug log and restart Bluetooth with switches OFF (or tap Stop) to end the trial.</string>
 		</dict>
 		<dict>
 			<key>cell</key>

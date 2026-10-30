@@ -64,44 +64,6 @@ static NSDictionary *BTPSHelperStatus(NSTimeInterval maxAge)
     return helper;
 }
 
-static BOOL BTPSIsBuiltIn(NSString *type)
-{
-    return [type isEqualToString:AVAudioSessionPortBuiltInSpeaker] ||
-           [type isEqualToString:AVAudioSessionPortBuiltInReceiver];
-}
-
-// v8.9.3: say what kind of device it is, so the laptop's own Bluetooth connection is recognizable as an output.
-static NSString *BTPSTypeLabel(NSString *type)
-{
-    if ([type isEqualToString:AVAudioSessionPortBluetoothA2DP] || [type isEqualToString:AVAudioSessionPortBluetoothLE] ||
-        [type isEqualToString:AVAudioSessionPortBluetoothHFP]) return @"Bluetooth";
-    if ([type isEqualToString:AVAudioSessionPortHeadphones]) return @"wired";
-    if ([type isEqualToString:AVAudioSessionPortUSBAudio]) return @"USB";
-    if ([type isEqualToString:AVAudioSessionPortAirPlay]) return @"AirPlay";
-    if ([type isEqualToString:AVAudioSessionPortCarAudio]) return @"CarPlay";
-    return nil;
-}
-
-static NSString *BTPSOutputName(NSDictionary *output)
-{
-    NSString *type = BTPSString(output[@"type"]);
-    if ([type isEqualToString:AVAudioSessionPortBuiltInSpeaker]) return @"iPhone speaker";
-    if ([type isEqualToString:AVAudioSessionPortBuiltInReceiver]) return @"iPhone earpiece";
-    NSString *name = BTPSString(output[@"name"]);
-    if (!name.length) name = @"(unnamed device)";
-    NSString *label = BTPSTypeLabel(type);
-    return label ? [NSString stringWithFormat:@"%@ (%@)", name, label] : name;
-}
-
-static NSString *BTPSOutputsDescription(id outputs)
-{
-    if (![outputs isKindOfClass:[NSArray class]]) return @"";
-    NSMutableArray<NSString *> *names = [NSMutableArray array];
-    for (id output in (NSArray *)outputs)
-        if ([output isKindOfClass:[NSDictionary class]]) [names addObject:BTPSOutputName(output)];
-    return [names componentsJoinedByString:@" + "];
-}
-
 static UIControl *BTPSFindControl(UIView *view)
 {
     for (UIView *sub in view.subviews) {
@@ -158,7 +120,7 @@ static UIControl *BTPSFindControl(UIView *view)
 - (void)refreshLiveRows
 {
     if (![self respondsToSelector:@selector(reloadSpecifierID:)]) return;
-    for (NSString *row in @[ @"session", @"playing", @"never" ]) [self reloadSpecifierID:row];
+    [self reloadSpecifierID:@"session"];
 }
 
 #pragma mark - values for the rows in Root.plist (the "get" selectors)
@@ -176,40 +138,6 @@ static UIControl *BTPSFindControl(UIView *view)
         return @"On - connect from your PC";
     }
     return summary;
-}
-
-- (id)playingValue:(id)specifier
-{
-    NSDictionary *helper = BTPSHelperStatus(20.0);
-    NSString *state = BTPSString(helper[@"state"]);
-    NSString *reason = BTPSString(helper[@"reason"]);
-    if ([state isEqualToString:@"playing"]) {
-        NSString *where = BTPSOutputsDescription(helper[@"outputs"]);
-        if (!where.length) where = @"Playing";
-        id volume = helper[@"volume"];
-        if ([volume isKindOfClass:[NSNumber class]] && [volume doubleValue] < 0.05)
-            where = [where stringByAppendingString:@" - volume 0%"];
-        return where;
-    }
-    if ([state isEqualToString:@"waiting"]) return reason.length ? [@"Waiting: " stringByAppendingString:reason] : @"Waiting";
-    return @"Not playing";
-}
-
-- (NSArray<NSDictionary *> *)neverList
-{
-    id list = BTPSCopyPref(@BTPS_KEY_V89_NEVER);
-    NSMutableArray<NSDictionary *> *items = [NSMutableArray array];
-    if ([list isKindOfClass:[NSArray class]])
-        for (id item in (NSArray *)list)
-            if ([item isKindOfClass:[NSDictionary class]]) [items addObject:item];
-    return items;
-}
-
-- (id)neverValue:(id)specifier
-{
-    NSMutableArray<NSString *> *names = [NSMutableArray array];
-    for (NSDictionary *item in [self neverList]) [names addObject:BTPSOutputName(item)];
-    return names.count ? [names componentsJoinedByString:@", "] : @"None";
 }
 
 #pragma mark - buttons (the "action" selectors)
@@ -396,70 +324,6 @@ static UIControl *BTPSFindControl(UIView *view)
         [self say:@"Open Control Center, press and hold the music controls, then tap the AirPlay icon to choose "
                   @"where audio plays."];
     }
-}
-
-// Candidates for the never-play list: what the helper is (or was just) using, minus the iPhone's own speaker and
-// earpiece. Falls back to the route this Settings process sees when the helper reports nothing external.
-- (NSArray<NSDictionary *> *)currentExternalOutputs
-{
-    NSMutableArray<NSDictionary *> *result = [NSMutableArray array];
-    id reported = BTPSHelperStatus(60.0)[@"outputs"];
-    if ([reported isKindOfClass:[NSArray class]])
-        for (id output in (NSArray *)reported)
-            if ([output isKindOfClass:[NSDictionary class]] && !BTPSIsBuiltIn(BTPSString(output[@"type"])))
-                [result addObject:output];
-    if (!result.count)
-        for (AVAudioSessionPortDescription *port in [AVAudioSession sharedInstance].currentRoute.outputs)
-            if (!BTPSIsBuiltIn(port.portType))
-                [result addObject:@{ @"name": port.portName ?: @"", @"type": port.portType ?: @"", @"uid": port.UID ?: @"" }];
-    return result;
-}
-
-- (void)neverPlayCurrent:(id)specifier
-{
-    NSArray<NSDictionary *> *candidates = [self currentExternalOutputs];
-    if (!candidates.count) {
-        [self say:@"The iPhone is not using an external output right now, so there is nothing to add. Start playback "
-                  @"from the PC first; if Playing on shows the PC, tap this again."];
-        return;
-    }
-    NSMutableArray<NSString *> *names = [NSMutableArray array];
-    for (NSDictionary *candidate in candidates) [names addObject:BTPSOutputName(candidate)];
-    NSString *title = [NSString stringWithFormat:@"Never play to %@?", [names componentsJoinedByString:@" + "]];
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:title
-        message:@"Use this for the PC that sends the audio: iOS can list it as an output because it is connected over "
-                @"Bluetooth, and playing there is silent. You can clear the list at any time."
-        preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-    __weak __typeof__(self) weakSelf = self;
-    [alert addAction:[UIAlertAction actionWithTitle:@"Never play there" style:UIAlertActionStyleDestructive
-                                            handler:^(UIAlertAction *chosen) {
-        NSMutableArray<NSDictionary *> *list = [[weakSelf neverList] mutableCopy];
-        for (NSDictionary *candidate in candidates) {
-            NSString *uid = BTPSString(candidate[@"uid"]);
-            NSString *name = BTPSString(candidate[@"name"]);
-            BOOL known = NO;
-            for (NSDictionary *item in list)
-                if ((uid.length && [BTPSString(item[@"uid"]) isEqualToString:uid]) ||
-                    (name.length && [BTPSString(item[@"name"]) isEqualToString:name])) known = YES;
-            if (!known && (uid.length || name.length)) [list addObject:@{ @"uid": uid, @"name": name }];
-        }
-        if (!BTPSWritePref(@BTPS_KEY_V89_NEVER, list)) {
-            [weakSelf say:@"Could not save the never-play list."];
-            return;
-        }
-        notify_post(BTPS_NOTIFY_V89_OUTPUT);
-        [weakSelf reloadSpecifiers];
-    }]];
-    [self presentViewController:alert animated:YES completion:nil];
-}
-
-- (void)clearNeverPlay:(id)specifier
-{
-    BTPSWritePref(@BTPS_KEY_V89_NEVER, nil);
-    notify_post(BTPS_NOTIFY_V89_OUTPUT);
-    [self reloadSpecifiers];
-    [self say:@"The never-play list is now empty."];
 }
 
 #pragma mark - alerts

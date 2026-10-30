@@ -149,15 +149,6 @@ int main(void) {
         self.assertGreaterEqual(helper.count("hlog(stdout,") + helper.count("hlog(stderr,"), 13)
         self.assertIn('@"volume":@(session.outputVolume)', helper)
 
-    def test_playing_on_shows_device_type_and_zero_volume(self):
-        controller = read("speakaprefs/BTPSRootListController.m")
-        label = controller.split("static NSString *BTPSTypeLabel(", 1)[1].split("static NSString *BTPSOutputName(", 1)[0]
-        self.assertIn("AVAudioSessionPortBluetoothA2DP", label)
-        self.assertIn('return @"Bluetooth";', label)
-        playing = controller.split("- (id)playingValue:(id)specifier", 1)[1].split("- (NSArray<NSDictionary *> *)neverList", 1)[0]
-        self.assertIn('helper[@"volume"]', playing)
-        self.assertIn('@" - volume 0%"', playing)
-
 
 if __name__ == "__main__":
     unittest.main()

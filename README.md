@@ -117,18 +117,13 @@ The speaker endpoint lives as long as that run of `bluetoothd`. Tap **Start** ag
 | Wired headphones or earbuds | A wired or USB headset plugged into the iPhone | Never uses Bluetooth, so the sound cannot go back to the PC. Wins even if the PC connected later. Waits while nothing is plugged in and starts as soon as something is. |
 | Any device (follow iOS) | Wherever iOS is playing: Control Center or **Choose output device...** | The mode for Bluetooth earbuds. See below. |
 
-**Playing on** shows the helper's current output with its type, for example `Headphones (wired)` or `LAPTOP-XXXX (Bluetooth)`. It
-appends `- volume 0%` when that output's volume is at zero. While the helper waits it shows the reason, for example
-`Waiting: no wired headphones plugged in`.
+The Speaka app's connection banner shows where the audio is playing, for example
+*LAPTOP-XXXX connected · playing on iPhone speaker*. It also warns when that output's volume is at zero, and says what
+it is waiting for, for example *waiting: no wired headphones plugged in*.
 
-**Bluetooth earbuds** need *Any device*, plus a one-time step. The PC that sends the audio is itself a Bluetooth audio device to iOS,
-and because it connects last, iOS sends media to it. Fix it once:
-
-1. While music plays, check **Playing on**.
-2. If it shows your PC, tap **Never play to current device**. It is remembered by device ID and name.
-3. Pick the earbuds with **Choose output device...**.
-
-**Clear never-play list** undoes this.
+**Bluetooth earbuds** need *Any device*: pick them with **Choose output device...** or in Control Center. The PC that
+sends the audio is itself a Bluetooth audio device to iOS, and because it connects last, iOS may send the sound back to
+it. If the app's banner shows your PC, pick the earbuds again.
 
 ### The Settings page
 
@@ -136,7 +131,7 @@ and because it connects last, iOS sends media to it. Fix it once:
 | --- | --- | --- |
 | Status | Loaded in daemon, Last event, Log channels | Whether the tweak is running inside `bluetoothd`, and whether its log channels work. |
 | Bluetooth speaker | Start, Stop and restore normal Bluetooth, Session | Turning the speaker on and off, and its current state. |
-| Audio output | Play audio on, Choose output device..., Playing on, Never play to current device, Never play to, Clear never-play list | Where the audio goes. |
+| Audio output | Play audio on, Choose output device... | Where the audio goes. |
 | Debug log | View debug log, Copy log to clipboard, Clear log | Everything needed to diagnose a problem. See [Logs and diagnostics](#logs-and-diagnostics). |
 | Lower sections | Research switches from v7 to v8.8 | **Start** sets the two one-shot switches (*Arm seven slots for ONE restart*, *Arm real Sink SDP + signaling ONCE*) and clears *Legacy sink experiment flag*. Each launch consumes them. Leave the tracing switches off. |
 
@@ -169,8 +164,8 @@ file map are in [app/README.md](app/README.md).
 | Start ends with "Still waiting" | `bluetoothd` still runs an older tweak build that has no Start handler | Check `diag.v89.build` in **View debug log**. Reinstall the package (its install script restarts `bluetoothd`), or run `sudo killall -9 bluetoothd`, then Start again. |
 | Session: `Off - Bluetooth was turned off and on; tap Start` | Toggling Bluetooth rebuilt Apple's endpoints without the speaker | Tap **Start**. |
 | The PC connects and immediately disconnects, or finds no speaker | No speaker endpoint registered: Bluetooth was toggled, or Start was not tapped since the last restart | Tap **Start**, then reconnect from the PC. |
-| The PC says it is playing, the iPhone is silent, and **Playing on** shows your PC `(Bluetooth)` | *Any device* is sending the sound back to the PC | Choose *iPhone speaker* or *Wired headphones*, or tap **Never play to current device**. |
-| **Playing on** ends in `- volume 0%` | That output's volume is at zero | Raise the iPhone volume while audio plays. |
+| The PC says it is playing, the iPhone is silent, and the app's banner shows your PC | *Any device* is sending the sound back to the PC | Choose *iPhone speaker* or *Wired headphones*, or pick your earbuds with **Choose output device...**. |
+| The app's banner says the volume is at 0% | That output's volume is at zero | Raise the iPhone volume while audio plays. |
 | Wired mode is silent: `Waiting: no wired headphones plugged in` | Nothing is plugged in | Plug the headset in; playback starts by itself. |
 | Audio stopped after a call, Siri, or another app played sound | iOS interrupted the helper | Pause and play on the PC, or change any audio setting. |
 | Bluetooth misbehaves in general | | Tap **Stop and restore normal Bluetooth**. Without Settings: `sudo killall -9 bluetoothd`. To remove everything, uninstall (see [above](#install-and-uninstall)). |
@@ -429,8 +424,8 @@ If anything goes wrong, recover with these steps, from least to most drastic:
 - **One session per `bluetoothd` run.** Tap Start again after a restart or a Bluetooth toggle.
 - **SBC only, one stream at a time.** The Sink endpoint accepts SBC; there is one endpoint, so one sending device at a time.
 - **Playback is controlled from the PC.** The tweak adds no media controls on the iPhone.
-- **Bluetooth earbuds are less tested.** They need *Any device* plus the one-time never-play step. Playing to them while receiving
-  from the PC (Source and Sink at once) has not been tested on a device.
+- **Bluetooth earbuds are less tested.** They need *Any device*, and iOS may switch the sound back to the PC when it
+  reconnects. Playing to them while receiving from the PC (Source and Sink at once) has not been tested on a device.
 - **Inactive legacy code is still compiled into the tweak.** This includes the first design's in-daemon decoder and player
   (`SBCSink.mm`; nothing calls it, and a test makes sure the live path never does) and the v7 diagnostic paths. Removing them
   changes the built tweak, so it belongs in its own tested release.
