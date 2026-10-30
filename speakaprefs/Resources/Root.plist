@@ -88,7 +88,7 @@
 			<key>defaults</key>
 			<string>com.apple.bluetooth</string>
 			<key>key</key>
-			<string>BTPhonoSinkV89OutputMode</string>
+			<string>SpeakaV89OutputMode</string>
 			<key>default</key>
 			<string>speaker</string>
 			<key>validValues</key>
@@ -112,7 +112,7 @@
 			<key>staticTextMessage</key>
 			<string>Changes apply right away, even while audio is playing. Wired headphones or earbuds waits until something is plugged in and never uses Bluetooth. Any device plays wherever iOS is playing; choose it in Control Center or with Choose output device.</string>
 			<key>PostNotification</key>
-			<string>com.parv.btphonosink.v89.output</string>
+			<string>com.parv.speaka.v89.output</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -204,7 +204,7 @@
 			<key>defaults</key>
 			<string>com.apple.bluetooth</string>
 			<key>key</key>
-			<string>BTPhonoSinkExperiments</string>
+			<string>SpeakaExperiments</string>
 			<key>label</key>
 			<string>Legacy sink experiment flag (inactive)</string>
 		</dict>
@@ -224,7 +224,7 @@
 			<key>defaults</key>
 			<string>com.apple.bluetooth</string>
 			<key>key</key>
-			<string>BTPhonoSinkSDPProbe</string>
+			<string>SpeakaSDPProbe</string>
 			<key>label</key>
 			<string>Trace existing SDP records (advanced)</string>
 		</dict>
@@ -244,7 +244,7 @@
 			<key>defaults</key>
 			<string>com.apple.bluetooth</string>
 			<key>key</key>
-			<string>BTPhonoSinkV80ConfigLookupObserver</string>
+			<string>SpeakaV80ConfigLookupObserver</string>
 			<key>default</key>
 			<false/>
 		</dict>
@@ -264,7 +264,7 @@
 			<key>defaults</key>
 			<string>com.apple.bluetooth</string>
 			<key>key</key>
-			<string>BTPhonoSinkV81SevenOnce</string>
+			<string>SpeakaV81SevenOnce</string>
 			<key>default</key>
 			<false/>
 		</dict>
@@ -284,7 +284,7 @@
 			<key>defaults</key>
 			<string>com.apple.bluetooth</string>
 			<key>key</key>
-			<string>BTPhonoSinkV82DecisiveOnce</string>
+			<string>SpeakaV82DecisiveOnce</string>
 			<key>default</key>
 			<false/>
 		</dict>

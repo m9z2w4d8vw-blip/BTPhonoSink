@@ -58,8 +58,8 @@ class TestV78(unittest.TestCase):
         self.assertIn('decisive_requested && g_v81_seven_armed && !BTPSExperimentsEnabled()',src)
         self.assertIn('g_native_source_success != 6',src)
     def test_settings_no_trial_toggle(self):
-        d=plistlib.loads((ROOT/'btphonosinkprefs/Resources/Root.plist').read_bytes())
-        self.assertNotIn('BTPhonoSinkV77SinkTrial',[x.get('key') for x in d['items']])
+        d=plistlib.loads((ROOT/'speakaprefs/Resources/Root.plist').read_bytes())
+        self.assertNotIn('SpeakaV77SinkTrial',[x.get('key') for x in d['items']])
     def test_pinned_disassembly_layout(self):
         docs=(ROOT/'docs/research/V78_AVDTP_CAPACITY_FINDINGS.md').read_text()
         for x in ['0xCEE14','0xCEE54','0xCEEE8','0x9768b0']:

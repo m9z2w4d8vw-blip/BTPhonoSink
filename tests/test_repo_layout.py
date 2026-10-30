@@ -9,7 +9,7 @@ import re
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-SUBPROJECTS = ("btpsaudiohelper", "btphonosinkprefs")
+SUBPROJECTS = ("btpsaudiohelper", "speakaprefs")
 FETCHED_AT_BUILD = {"btpsaudiohelper/vendor_sbc/sbc.c", "btpsaudiohelper/vendor_sbc/bits.c"}  # tools/fetch_google_sbc.sh
 SKIP_DIRS = {".git", ".theos", "packages", "obj", "__pycache__"}
 SOURCE_SUFFIXES = {".c", ".h", ".m", ".mm", ".xm"}
@@ -57,7 +57,7 @@ class RepoLayout(unittest.TestCase):
                                  f'#include "../{path.name}" like the other shared sources.')
 
     def test_root_holds_only_build_inputs(self):
-        allowed = {"Makefile", "control", "BTPhonoSink.plist", "README.md", ".gitignore"}
+        allowed = {"Makefile", "control", "Speaka.plist", "README.md", ".gitignore"}
         for path in ROOT.iterdir():
             if path.is_dir() or path.name in allowed or path.suffix in SOURCE_SUFFIXES:
                 continue

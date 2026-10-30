@@ -194,7 +194,7 @@ static void log_common(int sync, const char *fmt, va_list ap)
     int inited = g_inited;
     pthread_mutex_unlock(&g_lock);
 
-    os_log(OS_LOG_DEFAULT, "[BTPhonoSink] %{public}s", line);
+    os_log(OS_LOG_DEFAULT, "[Speaka] %{public}s", line);
 
     if (sync || !inited) {
         files_append_all(line);
@@ -339,7 +339,7 @@ void BTPSLogInit(void)
     g_inited = 1;
     pthread_mutex_unlock(&g_lock);
 
-    g_queue = dispatch_queue_create("com.parv.btphonosink.log", DISPATCH_QUEUE_SERIAL);
+    g_queue = dispatch_queue_create("com.parv.speaka.log", DISPATCH_QUEUE_SERIAL);
     g_experiments = read_experiments_flag();
     g_notify_register_status = notify_register_check(BTPS_NOTIFY_STATE, &g_notify_token);
 

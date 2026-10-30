@@ -2,7 +2,7 @@
 //  SPTweakClient.m
 //  Speaka
 //
-//  Every rule here mirrors btphonosinkprefs/BTPSRootListController.m (the Settings page), so the app and Settings
+//  Every rule here mirrors speakaprefs/BTPSRootListController.m (the Settings page), so the app and Settings
 //  always agree about the speaker's state. tests/test_speaka_app.py checks that they stay in step.
 //
 
@@ -130,7 +130,7 @@ static NSString *SPOutputsDescription(id outputs)
 
 + (NSArray<NSDictionary<NSString *, NSString *> *> *)outputModes
 {
-    // Titles match the "Play audio on" list in btphonosinkprefs/Resources/Root.plist.
+    // Titles match the "Play audio on" list in speakaprefs/Resources/Root.plist.
     return @[
         @{ @"key": @"speaker", @"title": @"iPhone speaker", @"shortTitle": @"iPhone speaker",
            @"symbol": @"speaker.wave.2.fill", @"detail": @"Always the built-in loudspeaker" },

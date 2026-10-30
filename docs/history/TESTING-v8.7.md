@@ -1,4 +1,4 @@
-# BTPhonoSink v8.7 — Raw media-handler entry counter
+# Speaka v8.7 — Raw media-handler entry counter
 
 **Change relative to v8.6:** replace ONLY the media hook's inspection logic. The experimental v8.5/v8.6 endpoint, SDP, seven-entry audio table, 44.1/48kHz SBC settings, RX/TX signaling, and existing one-shot controls are unchanged. There is no live SBC forwarding or playback in v8.7.
 
@@ -28,11 +28,11 @@ The one-shot trial must install the media hook before experimental Sink SEP regi
 ## Controlled test
 
 1. Install the completed CI `.deb`. Keep a functioning v8.5 backup. With the two one-shot switches OFF, verify regular headphones still work. Disconnect them.
-2. In Settings > BTPhonoSink, enable **Arm seven slots for ONE restart** and **Arm real Sink SDP + signaling ONCE**; keep Legacy Sink OFF.
+2. In Settings > Speaka, enable **Arm seven slots for ONE restart** and **Arm real Sink SDP + signaling ONCE**; keep Legacy Sink OFF.
 3. Restart `bluetoothd` *once* via the current reachable IP (historically `10.5.106.42`):
    `ssh -t mobile@10.5.106.42 "sudo killall -9 bluetoothd"`
 4. Confirm `build: v8.7-raw-media-entry-counter`, `V87 MEDIA hook installed`, `V83 AUDIO_TABLE SWAPPED`, `V83 SEP RESULT ret=0 seid=7`, `V83 SDP add ret=0` in the initial debug log. If any fails, stop and export; do not pair Windows.
-5. Connect once from Windows. Play ordinary continuous audio for up to 30 seconds. If the daemon disconnects, **do not restart or rearm immediately**. Capture `/tmp/FTABHarvest/BTPhonoSink.log` or the Settings log containing *both* the active and replacement sessions.
+5. Connect once from Windows. Play ordinary continuous audio for up to 30 seconds. If the daemon disconnects, **do not restart or rearm immediately**. Capture `/tmp/FTABHarvest/Speaka.log` or the Settings log containing *both* the active and replacement sessions.
 6. Inspect `V86 SINK_START_ACCEPT_QUEUED`, `V87_MEDIA_ENTER`, and `V87_MEDIA_RX` for the active PID and timestamps. If START occurs but *no* `V87_MEDIA_ENTER`, the media callback may not have been entered, may have failed before logging, or an earlier path may have crashed. If an ENTER occurs but no matching RX, Apple's original handler or logging path may not have returned; investigate rather than claiming the hook is safe. If RX is nonzero and daemon remains stable, inbound data reached the handler; do **not** infer which CID belongs to Sink without additional correlation.
 7. After exporting, ensure both one-shot settings are OFF; restart Bluetooth once to restore ordinary operations. If instability persists, reinstall the known-good `.deb`.
 

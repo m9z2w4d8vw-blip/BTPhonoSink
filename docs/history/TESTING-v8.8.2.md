@@ -91,7 +91,7 @@ maintainer-script permission fix need no changes.
 ## Device test — current IP 10.0.0.128
 
 1. Install the new `.deb` and set the phone speaker to a moderate volume.
-2. In **Settings > BTPhonoSink**, enable **Arm seven slots for ONE restart** and
+2. In **Settings > Speaka**, enable **Arm seven slots for ONE restart** and
    **Arm real Sink SDP + signaling ONCE**. Keep the legacy experiment off.
 3. From **Windows PowerShell**, restart Bluetooth once:
 
@@ -105,7 +105,7 @@ maintainer-script permission fix need no changes.
 5. Watch both logs in another PowerShell window:
 
    ```powershell
-   ssh mobile@10.0.0.128 "tail -n 30 -f /tmp/FTABHarvest/BTPhonoSink.log /tmp/FTABHarvest/BTPSAudioHelper-v88.log"
+   ssh mobile@10.0.0.128 "tail -n 30 -f /tmp/FTABHarvest/Speaka.log /tmp/FTABHarvest/BTPSAudioHelper-v88.log"
    ```
 
    Ctrl+C stops log watching. The helper still uses the `v88` log filename.
@@ -124,7 +124,7 @@ If audio cuts out, leave the PC playing for about five seconds and export both
 logs before trying pause/resume:
 
 ```powershell
-scp mobile@10.0.0.128:/tmp/FTABHarvest/BTPhonoSink.log "$env:USERPROFILE\Downloads\BTPhonoSink-v882.log"
+scp mobile@10.0.0.128:/tmp/FTABHarvest/Speaka.log "$env:USERPROFILE\Downloads\Speaka-v882.log"
 scp mobile@10.0.0.128:/tmp/FTABHarvest/BTPSAudioHelper-v88.log "$env:USERPROFILE\Downloads\BTPSAudioHelper-v882.log"
 ```
 

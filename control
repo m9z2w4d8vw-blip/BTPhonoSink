@@ -1,4 +1,4 @@
-Package: com.parv.btphonosink
+Package: com.parv.speaka
 Name: Speaka
 Version: 0.1.0
 Architecture: iphoneos-arm64

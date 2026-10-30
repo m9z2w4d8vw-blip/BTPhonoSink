@@ -7,6 +7,7 @@ in any session, although earbuds were replugged during playback.
 """
 import os
 import pathlib
+import re
 import plistlib
 import shutil
 import subprocess
@@ -169,15 +170,19 @@ int main(void) {
         self.assertIn("why=0x%x", daemon)
 
     def test_settings_and_version(self):
-        plist = plistlib.loads((ROOT / "btphonosinkprefs/Resources/Root.plist").read_bytes())
-        item = next(i for i in plist["items"] if i.get("key") == "BTPhonoSinkV89OutputMode")
+        plist = plistlib.loads((ROOT / "speakaprefs/Resources/Root.plist").read_bytes())
+        item = next(i for i in plist["items"] if i.get("key") == "SpeakaV89OutputMode")
         self.assertEqual(item["validValues"], ["speaker", "headphones", "any"])
         self.assertEqual(item["validTitles"][1], "Wired headphones or earbuds")
         self.assertEqual(item["shortTitles"][1], "Wired headphones")
         footer = next(i for i in plist["items"] if i.get("label") == "Audio output")["footerText"]
         self.assertIn("never uses Bluetooth", footer)
-        self.assertIn('#define BTPS_V89_BUILD_TAG "v8.9.4-one-tap-output-select"', read("Tweak.xm"))
-        self.assertIn("V889_HELPER build=v8.9.4-output-select", read("btpsaudiohelper/BTPSV88Stream.m"))
+        # v8.9.4 or any later build (v9.0 renamed everything to Speaka).
+        for pattern, text in ((r'#define BTPS_V89_BUILD_TAG "v(\d+)\.(\d+)\.(\d+)-one-tap-output-select"', read("Tweak.xm")),
+                              (r"V889_HELPER build=v(\d+)\.(\d+)\.(\d+)-output-select", read("btpsaudiohelper/BTPSV88Stream.m"))):
+            version = re.search(pattern, text)
+            self.assertIsNotNone(version, pattern)
+            self.assertGreaterEqual(tuple(map(int, version.groups())), (8, 9, 4))
 
 
 if __name__ == "__main__":

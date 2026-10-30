@@ -153,7 +153,7 @@ static void v89_handle_request(void)
 void BTPSV89SessionStart(void)
 {
     if (g_v89_queue) return;
-    g_v89_queue = dispatch_queue_create("com.parv.btphonosink.v89.session", DISPATCH_QUEUE_SERIAL);
+    g_v89_queue = dispatch_queue_create("com.parv.speaka.v89.session", DISPATCH_QUEUE_SERIAL);
     if (!g_v89_queue) {
         BTPSSetStatus(BTPS_STATUS_V89_SESSION, "UNAVAILABLE: no worker queue; use the manual switches");
         return;

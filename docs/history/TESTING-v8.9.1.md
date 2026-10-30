@@ -64,7 +64,7 @@ result and I will add it if needed.
 
 ## Device test (Dopamine / rootless)
 
-1. Install the new nightly `.deb`. Open **Settings > BTPhonoSink**; **Session** should read `Off`.
+1. Install the new nightly `.deb`. Open **Settings > Speaka**; **Session** should read `Off`.
 2. Tap **Start** and confirm.
    - **Success:** Bluetooth restarts once and Settings reaches "The iPhone is now a Bluetooth speaker".
      The daemon log shows `V89_SESSION ... restarting bluetoothd via launchctl kickstart -k` and, after
@@ -81,7 +81,7 @@ The Settings build label still reads `v8.8-continuous-sbc-ring`. `diag.v89.build
 Export both logs right after a test (the daemon log wipes at 512 KB):
 
 ```powershell
-scp mobile@<phone-ip>:/tmp/FTABHarvest/BTPhonoSink.log "$env:USERPROFILE\Downloads\BTPhonoSink-v891.log"
+scp mobile@<phone-ip>:/tmp/FTABHarvest/Speaka.log "$env:USERPROFILE\Downloads\Speaka-v891.log"
 scp mobile@<phone-ip>:/tmp/FTABHarvest/BTPSAudioHelper-v88.log "$env:USERPROFILE\Downloads\BTPSAudioHelper-v891.log"
 ```
 
@@ -95,8 +95,8 @@ the paths are preserved, and commit together:
 BTPSV89Session.c
 TESTING-v8.9.1.md            (new)
 Tweak.xm
-btphonosinkprefs/BTPSRootListController.m
-btphonosinkprefs/Resources/Root.plist
+speakaprefs/BTPSRootListController.m
+speakaprefs/Resources/Root.plist
 tests/test_v89_session_output.py
 ```
 

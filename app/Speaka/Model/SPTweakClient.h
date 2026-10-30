@@ -2,7 +2,7 @@
 //  SPTweakClient.h
 //  Speaka
 //
-//  Talks to the BTPhonoSink tweak exactly like Settings > BTPhonoSink does: through the com.apple.bluetooth
+//  Talks to the Speaka tweak exactly like Settings > Speaka does: through the com.apple.bluetooth
 //  preferences and the Darwin notifications defined in BTPSShared.h at the repository root.
 //
 

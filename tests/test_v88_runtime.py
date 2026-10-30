@@ -48,7 +48,7 @@ class V88Runtime(unittest.TestCase):
   self.assertIn('if(ret==0u && control_ok)',s)
  def test_launchd_plist(self):
   import plistlib
-  p=plistlib.loads((P/'layout/Library/LaunchDaemons/com.parv.btphonosink.audio.plist').read_bytes())
+  p=plistlib.loads((P/'layout/Library/LaunchDaemons/com.parv.speaka.audio.plist').read_bytes())
   self.assertEqual(p['UserName'],'mobile')
   self.assertEqual(p['Sockets']['Stream']['SockNodeName'],'127.0.0.1')
   self.assertEqual(p['ProgramArguments'],['/var/jb/usr/bin/BTPSAudioHelper','--stream-service'])

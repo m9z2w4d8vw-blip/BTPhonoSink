@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only evidence collector for the precise 2026 BTPhonoSink daemon.
+"""Read-only evidence collector for the precise 2026 Speaka daemon.
 Does not invoke or patch private symbols.
 """
 import argparse, hashlib,struct,subprocess,shutil

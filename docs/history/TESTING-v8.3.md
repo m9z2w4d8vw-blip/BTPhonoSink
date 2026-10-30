@@ -1,4 +1,4 @@
-# BTPhonoSink v8.3 — post-Source audio context trial
+# Speaka v8.3 — post-Source audio context trial
 
 **Experimental, changes private bluetoothd heap state, may break Bluetooth. NOT a working Bluetooth sink.**
 
@@ -20,7 +20,7 @@ Keep a locally accessible .deb of the working v8.2+TX build. Make sure SSH works
 2. Enable **Arm seven slots for ONE restart** and **Arm real Sink SDP + signaling ONCE**. Leave other experimental switches OFF.
 3. Use the phone's current SSH IP (it may differ from `10.5.82.212`):
    `ssh -t mobile@10.5.82.212 "sudo killall -9 bluetoothd"`
-4. In Settings > BTPhonoSink > Debug Log, check for `V83 NATIVE_SOURCE_LOOP RETURN ret=0`, `V83 AUDIO_TABLE SWAPPED`, `V83 SEP RESULT ret=0 seid=7`, `V83 SDP add ret=0`. If any are missing/failed, **stop** and export that session's log. Do NOT rearm/restart repeatedly.
+4. In Settings > Speaka > Debug Log, check for `V83 NATIVE_SOURCE_LOOP RETURN ret=0`, `V83 AUDIO_TABLE SWAPPED`, `V83 SEP RESULT ret=0 seid=7`, `V83 SDP add ret=0`. If any are missing/failed, **stop** and export that session's log. Do NOT rearm/restart repeatedly.
 5. With the session still active, from Windows PowerShell run the previously verified SDP scanner to query the iPhone's actual Classic address `80:54:E3:94:45:F2`: `py -3.10 .\btps_windows_sdp_query_v2.py 80:54:E3:94:45:F2 --save`. A remote 0x110B match is only a prerequisite.
 6. Attempt ONE Windows Bluetooth connection. iPhone debug log should show `V82 RX_SIGNAL`, `V82 TX_SIGNAL`, and raw packets for sink SEID 7. Compare `SET_CONFIGURATION` ACCEPT (`msg=2`) vs REJECT (`msg=3`) with matched CID/transaction labels. Do not claim native Sink works without Sink-directed SET_CONFIGURATION, OPEN, START and inbound media bytes.
 7. Export the complete iPhone log **before** restarting the daemon.

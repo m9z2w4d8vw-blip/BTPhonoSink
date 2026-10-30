@@ -1,7 +1,7 @@
 # v8.9: one-tap Start/Stop and audio output selection
 
 This source patch builds on v8.8.2 (the idle-check guard is unchanged). It adds two things to
-**Settings > BTPhonoSink**:
+**Settings > Speaka**:
 
 - A **Start** button that replaces "turn on both one-shot switches, then run
   `ssh ... "sudo killall -9 bluetoothd"` in PowerShell", plus a **Stop** button that restarts
@@ -14,13 +14,13 @@ the device test below are still required.
 
 ## How Start works
 
-1. Settings writes a short request (`BTPhonoSinkV89SessionRequest`: action, random nonce, time) to the
+1. Settings writes a short request (`SpeakaV89SessionRequest`: action, random nonce, time) to the
    tweak's existing preferences domain and posts the Darwin notification
-   `com.parv.btphonosink.v89.session`. Settings never writes the one-shot switches itself.
+   `com.parv.speaka.v89.session`. Settings never writes the one-shot switches itself.
 2. The tweak, already running inside bluetoothd, handles the notification on its own serial queue. It
    deletes the request before acting, checks the action, the nonce and that the request is less than
-   30 seconds old, then writes **the same two one-shot switches** (`BTPhonoSinkV81SevenOnce`,
-   `BTPhonoSinkV82DecisiveOnce`) and turns the retired legacy flag off. It reads them back.
+   30 seconds old, then writes **the same two one-shot switches** (`SpeakaV81SevenOnce`,
+   `SpeakaV82DecisiveOnce`) and turns the retired legacy flag off. It reads them back.
 3. Only if everything reads back correctly does the tweak end its own process with `SIGKILL`, exactly
    what `killall -9 bluetoothd` did. launchd relaunches bluetoothd, and the existing one-shot code
    consumes the switches as before, so the crash-safety of v8.1/v8.2 is unchanged: a crashing trial
@@ -59,7 +59,7 @@ the two devices happen to use the same endpoint number.
 
 ## Device test
 
-1. Install the new nightly `.deb`. Open **Settings > BTPhonoSink**; **Session** should read `Off`.
+1. Install the new nightly `.deb`. Open **Settings > Speaka**; **Session** should read `Off`.
 2. Tap **Start** and confirm. Bluetooth restarts once; AirPods and other devices reconnect by
    themselves. Wait for "The iPhone is now a Bluetooth speaker". No PowerShell is needed.
 3. On the PC, connect to the iPhone, choose it as the audio output and play music.
@@ -76,7 +76,7 @@ Export both logs right after a test. The daemon log wipes itself at 512 KB, whic
 of streaming:
 
 ```powershell
-scp mobile@<phone-ip>:/tmp/FTABHarvest/BTPhonoSink.log "$env:USERPROFILE\Downloads\BTPhonoSink-v89.log"
+scp mobile@<phone-ip>:/tmp/FTABHarvest/Speaka.log "$env:USERPROFILE\Downloads\Speaka-v89.log"
 scp mobile@<phone-ip>:/tmp/FTABHarvest/BTPSAudioHelper-v88.log "$env:USERPROFILE\Downloads\BTPSAudioHelper-v89.log"
 ```
 
@@ -85,7 +85,7 @@ scp mobile@<phone-ip>:/tmp/FTABHarvest/BTPSAudioHelper-v88.log "$env:USERPROFILE
 The Settings build label still reads `v8.8-continuous-sbc-ring`, as it did for v8.8.1 and v8.8.2.
 `diag.v89.build` in the debug log's status block identifies this build.
 
-Daemon log (`BTPhonoSink.log`):
+Daemon log (`Speaka.log`):
 
 | Line | Meaning |
 | --- | --- |
@@ -131,7 +131,7 @@ Settings messages:
 Prepared against repository main commit `e1d01de878b7c6188ddbb6f831b042794ba2e14e`.
 
 Upload the ZIP's extracted contents to the **root of the existing repository**, preserving the
-`btpsaudiohelper/`, `btphonosinkprefs/` and `tests/` folders, and commit them together. On GitHub web,
+`btpsaudiohelper/`, `speakaprefs/` and `tests/` folders, and commit them together. On GitHub web,
 use **Add file > Upload files** at the repository root, then **drag** the extracted files and folders
 onto the page. The "choose your files" dialog drops folder paths, which would put files in the wrong
 place. The 16 files are:
@@ -147,10 +147,10 @@ TESTING-v8.9.md             (new)
 Tweak.xm
 btpsaudiohelper/BTPSV88Stream.m
 btpsaudiohelper/BTPSV89Output.h          (new)
-btphonosinkprefs/BTPSRootListController.h
-btphonosinkprefs/BTPSRootListController.m
-btphonosinkprefs/Makefile
-btphonosinkprefs/Resources/Root.plist
+speakaprefs/BTPSRootListController.h
+speakaprefs/BTPSRootListController.m
+speakaprefs/Makefile
+speakaprefs/Resources/Root.plist
 tests/test_v881_audio_output.py
 tests/test_v89_session_output.py         (new)
 ```

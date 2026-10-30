@@ -27,7 +27,7 @@ class DaemonProbeTests(unittest.TestCase):
         self.assertNotIn('OI_SDPDB_AddServiceRecord',probe)
         self.assertNotIn('AVDTP_RegisterMultipoint(',probe)
     def test_request_explicit_and_correlated(self):
-        ui=(ROOT/'btphonosinkprefs/BTPSLogViewController.m').read_text()
+        ui=(ROOT/'speakaprefs/BTPSLogViewController.m').read_text()
         shared=(ROOT/'BTPSShared.h').read_text()
         for term in ['Send PCM from bluetoothd (v7.4)','promptDaemonIPCTest','notify_post(BTPS_NOTIFY_DAEMON_PROBE)',
                      'CFPreferencesSynchronize','NSUUID UUID','--daemon','six digits']:
@@ -43,7 +43,7 @@ class DaemonProbeTests(unittest.TestCase):
         self.assertIn('daemon_mode?880:660',helper)
         self.assertIn('INADDR_LOOPBACK',helper)
     def test_prefs_and_logger_export_v74_status(self):
-        log=(ROOT/'btphonosinkprefs/BTPSLogReader.m').read_text()
+        log=(ROOT/'speakaprefs/BTPSLogReader.m').read_text()
         self.assertIn('V7.4 BLUETOOTHD-TO-HELPER REQUEST',log)
         self.assertIn('diag.v74_ipc',log)
         self.assertIn('BTPSDaemonIPCRequestLastResult',log)

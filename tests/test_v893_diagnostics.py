@@ -125,10 +125,10 @@ int main(void) {
         self.assertIn("if(v893_detail_allowed()) BTPSLogNow(\"V88_DECODE", drain)
 
     def test_settings_export_includes_helper_status_and_log(self):
-        launchd = plistlib.loads((ROOT / "layout/Library/LaunchDaemons/com.parv.btphonosink.audio.plist").read_bytes())
+        launchd = plistlib.loads((ROOT / "layout/Library/LaunchDaemons/com.parv.speaka.audio.plist").read_bytes())
         path = re.search(r'#define BTPS_HELPER_LOG_FILE\s+"([^"]+)"', read("BTPSShared.h")).group(1)
         self.assertEqual(path, launchd["StandardOutPath"])
-        reader = read("btphonosinkprefs/BTPSLogReader.m")
+        reader = read("speakaprefs/BTPSLogReader.m")
         full = reader.split("- (NSString *)fullText", 1)[1]
         self.assertLess(full.index("[self appendHelperSection:out];"), full.index("== WHAT THIS SCREEN COULD READ =="))
         section = reader.split("- (void)appendHelperSection:(NSMutableString *)out", 1)[1].split("- (NSString *)fullText", 1)[0]
@@ -150,7 +150,7 @@ int main(void) {
         self.assertIn('@"volume":@(session.outputVolume)', helper)
 
     def test_playing_on_shows_device_type_and_zero_volume(self):
-        controller = read("btphonosinkprefs/BTPSRootListController.m")
+        controller = read("speakaprefs/BTPSRootListController.m")
         label = controller.split("static NSString *BTPSTypeLabel(", 1)[1].split("static NSString *BTPSOutputName(", 1)[0]
         self.assertIn("AVAudioSessionPortBluetoothA2DP", label)
         self.assertIn('return @"Bluetooth";', label)

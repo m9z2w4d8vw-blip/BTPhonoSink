@@ -86,7 +86,7 @@ class SBCStreamTests(unittest.TestCase):
   helper=(ROOT/'btpsaudiohelper/main.m').read_text()
   for token in ('--sbc','SBC_RECEIVED','BTPS_V75_RESULT','V75_SBC','SBC_VERIFIED','btps_v75_extract_sbc'):
    self.assertIn(token,helper)
-  self.assertIn('Save Log to iCloud Drive', (ROOT/'btphonosinkprefs/BTPSLogViewController.m').read_text())
+  self.assertIn('Save Log to iCloud Drive', (ROOT/'speakaprefs/BTPSLogViewController.m').read_text())
   self.assertIn('#define BTPS_AVDTP_TSEP_SNK 1u',daemon)
   self.assertIn('decisive_requested && g_v81_seven_armed && !BTPSExperimentsEnabled()',daemon)
   self.assertIn('g_native_source_success != 6',daemon)

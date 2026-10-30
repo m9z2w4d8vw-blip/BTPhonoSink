@@ -42,8 +42,8 @@ class V77Safety(unittest.TestCase):
         result=SinkCaps()
         self.assertNotEqual(self.func(ctypes.byref(result),src,codec),0)
     def test_v77_trial_retired_from_settings(self):
-        pl=plistlib.loads((ROOT/'btphonosinkprefs/Resources/Root.plist').read_bytes())
-        self.assertFalse(any(x.get('key')=='BTPhonoSinkV77SinkTrial' for x in pl['items']))
+        pl=plistlib.loads((ROOT/'speakaprefs/Resources/Root.plist').read_bytes())
+        self.assertFalse(any(x.get('key')=='SpeakaV77SinkTrial' for x in pl['items']))
     def test_v77_mutation_disabled_after_error_0x68(self):
         src=(ROOT/'Tweak.xm').read_text()
         self.assertNotIn('btps_v77_attempt_after_sources(',src)

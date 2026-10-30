@@ -15,8 +15,8 @@ class V80ConfigGetterObserver(unittest.TestCase):
         self.assertIn('memcmp(observed, BTPS_V80_GET_CONFIG_SIG, sizeof observed)', SRC)
         self.assertIn('!uuid_ok',SRC)
     def test_opt_in_default_off(self):
-        prefs=plistlib.loads((ROOT/'btphonosinkprefs/Resources/Root.plist').read_bytes())
-        spec=[e for e in prefs['items'] if e.get('key')=='BTPhonoSinkV80ConfigLookupObserver']
+        prefs=plistlib.loads((ROOT/'speakaprefs/Resources/Root.plist').read_bytes())
+        spec=[e for e in prefs['items'] if e.get('key')=='SpeakaV80ConfigLookupObserver']
         self.assertEqual(len(spec),1)
         self.assertIs(spec[0]['default'],False)
         self.assertEqual(spec[0]['defaults'],'com.apple.bluetooth')

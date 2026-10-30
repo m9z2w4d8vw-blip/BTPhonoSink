@@ -44,8 +44,8 @@ class TrialTest(unittest.TestCase):
         for mode,length in ((2,32),(-1,32),(1,3),(1,31)):
             self.assertNotEqual(self.call(arm=mode,length=length)[0],0)
     def test_default_off_and_registration_requires_separate_one_shot_arm(self):
-        plist=plistlib.loads((ROOT/'btphonosinkprefs/Resources/Root.plist').read_bytes())
-        switches=[x for x in plist['items'] if x.get('key')=='BTPhonoSinkV81SevenOnce']
+        plist=plistlib.loads((ROOT/'speakaprefs/Resources/Root.plist').read_bytes())
+        switches=[x for x in plist['items'] if x.get('key')=='SpeakaV81SevenOnce']
         self.assertEqual(len(switches),1)
         self.assertIs(switches[0]['default'],False)
         self.assertEqual(switches[0]['defaults'],'com.apple.bluetooth')

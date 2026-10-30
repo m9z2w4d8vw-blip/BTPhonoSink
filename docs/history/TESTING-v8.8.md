@@ -9,7 +9,7 @@ live CoreAudio output or launchd activation works on the phone.
 
 1. Install the new nightly `.deb`. Package installation registers a socket-activated
    helper; it does not restart Bluetooth or arm a trial. Keep your v8.7 package.
-2. In Settings > BTPhonoSink enable **Arm seven slots for ONE restart** and
+2. In Settings > Speaka enable **Arm seven slots for ONE restart** and
    **Arm real Sink SDP + signaling ONCE**. Keep the legacy experiment OFF.
 3. From Windows PowerShell restart Bluetooth once:
    `ssh -t mobile@10.5.4.185 "sudo killall -9 bluetoothd"`
@@ -29,7 +29,7 @@ live CoreAudio output or launchd activation works on the phone.
 Export both process logs from PowerShell if silent or unstable:
 
 ```powershell
-scp mobile@10.5.4.185:/tmp/FTABHarvest/BTPhonoSink.log "$env:USERPROFILE\Downloads\BTPhonoSink-v88.log"
+scp mobile@10.5.4.185:/tmp/FTABHarvest/Speaka.log "$env:USERPROFILE\Downloads\Speaka-v88.log"
 scp mobile@10.5.4.185:/tmp/FTABHarvest/BTPSAudioHelper-v88.log "$env:USERPROFILE\Downloads\BTPSAudioHelper-v88.log"
 ```
 

@@ -1,4 +1,4 @@
-# BTPhonoSink v7.3: cross-process PCM playback experiment
+# Speaka v7.3: cross-process PCM playback experiment
 
 **Purpose:** Learn whether a separate, ordinary mobile-user command-line process can receive
 raw PCM from Preferences.app over a loopback connection and render it using AVAudioPlayer.
@@ -9,7 +9,7 @@ never received via Bluetooth, and the known-invalid SBC decoder is not involved.
 
 - Installs a standalone command-line executable: `/var/jb/usr/bin/BTPSAudioHelper`.
   It does not auto-start, add a LaunchDaemon, request elevated privileges, or touch bluetoothd.
-- Adds **Send PCM to Separate Helper (v7.3)** inside Settings > BTPhonoSink > View debug log.
+- Adds **Send PCM to Separate Helper (v7.3)** inside Settings > Speaka > View debug log.
 - The Settings button generates 0.8 seconds of **660 Hz** mono, 16-bit PCM at 44.1 kHz;
   it transmits those 70,560 bytes to the helper via loopback-only TCP `127.0.0.1:37593`.
 - Frame carries magic, protocol version, exact format, six-digit one-shot token and CRC32.
@@ -24,9 +24,9 @@ never received via Bluetooth, and the known-invalid SBC decoder is not involved.
 ## Install and verify the build
 
 1. Keep the **working v7.2 .deb** for rollback.
-2. Upload **all** files from `BTPhonoSink-main/` to the existing GitHub repository root,
+2. Upload **all** files from `Speaka-main/` to the existing GitHub repository root,
    including `.github/workflows/build.yml`, `btpsaudiohelper/`, `BTPSIPCProtocol.c/h`,
-   `btphonosinkprefs/` and `tests/`. Do NOT upload the ZIP alone.
+   `speakaprefs/` and `tests/`. Do NOT upload the ZIP alone.
 3. Commit; verify a green GitHub Actions **build** workflow. Its package verification
    now **fails** if the helper executable is missing from `var/jb/usr/bin/`.
 4. Install the newly created `.deb` from the latest GitHub nightly release via Sileo.
@@ -40,7 +40,7 @@ never received via Bluetooth, and the known-invalid SBC decoder is not involved.
 ## Run the cross-process test
 
 1. Disconnect your headphones if you want to hear the iPhone's built-in speaker. Turn up volume.
-2. Keep the phone unlocked with Settings > BTPhonoSink > **View debug log** open.
+2. Keep the phone unlocked with Settings > Speaka > **View debug log** open.
 3. Open **Windows PowerShell** on the laptop and execute exactly:
 
    ```powershell

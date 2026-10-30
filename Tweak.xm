@@ -1,10 +1,10 @@
 /*
- * BTPhonoSink - v8.2 one-shot native A2DP Sink signaling experiment (OFF by default).
+ * Speaka - v8.2 one-shot native A2DP Sink signaling experiment (OFF by default).
  *
  * Goal of the project: make the iPhone show up as a Bluetooth speaker (A2DP sink). Nobody knows yet whether the
  * daemon's stack can be taught that, so the default build only WATCHES; an explicitly armed ONE-SHOT
  * initializer count override changes only the returned config shadow. Everything is written to the debug log
- * that Settings > BTPhonoSink displays.
+ * that Settings > Speaka displays.
  *
  * What it does:
  *   1. Finds the daemon's own image (the one MH_EXECUTE image; NOT "image 0", which is not reliable when libraries
@@ -49,7 +49,7 @@
  * v7.8: disables additional Sink registration even if the old v7.7 preference is ON.
  *       Once six native Sources register, safely snapshots the AVDTP slot table
  *       and independently counts vacant entries. No table mutation or new SDP.
- * v8.9: Settings > BTPhonoSink > Start/Stop arms or clears the same two one-shot switches and restarts this
+ * v8.9: Settings > Speaka > Start/Stop arms or clears the same two one-shot switches and restarts this
  *       daemon from inside (BTPSV89Session.c). Audio output selection lives in BTPSAudioHelper only.
  */
 #include <CoreFoundation/CoreFoundation.h>
@@ -84,7 +84,7 @@
 #define BTPS_BUILD_TAG "v8.8-continuous-sbc-ring"
 /* v8.9 keeps the v8.8 build label, as v8.8.1 and v8.8.2 did; this separate tag identifies the one-tap
  * Start/Stop build in the status block (diag.v89.build) and the log. */
-#define BTPS_V89_BUILD_TAG "v8.9.4-one-tap-output-select"
+#define BTPS_V89_BUILD_TAG "v9.0.0-one-tap-output-select"
 
 /* AVDTP constants, used for native Source registration diagnostics */
 #define BTPS_AVDTP_TSEP_SRC 0u
@@ -607,16 +607,16 @@ static int g_v80_enabled_for_v79_audit(void) { return g_v80_enabled; }
 /* Consumed before installing ANY private hook. Missing seven-slot arm fails closed. */
 static int btps_v82_consume_trial_arm(void)
 {
-    CFPropertyListRef v = CFPreferencesCopyAppValue(CFSTR("BTPhonoSinkV82DecisiveOnce"),
+    CFPropertyListRef v = CFPreferencesCopyAppValue(CFSTR("SpeakaV82DecisiveOnce"),
                                                    CFSTR(BTPS_PREFS_DOMAIN));
     int requested = v && CFGetTypeID(v) == CFBooleanGetTypeID() &&
                     CFBooleanGetValue((CFBooleanRef)v);
     if (v) CFRelease(v);
     if (!requested) return 0;
-    CFPreferencesSetAppValue(CFSTR("BTPhonoSinkV82DecisiveOnce"), kCFBooleanFalse,
+    CFPreferencesSetAppValue(CFSTR("SpeakaV82DecisiveOnce"), kCFBooleanFalse,
                              CFSTR(BTPS_PREFS_DOMAIN));
     Boolean saved = CFPreferencesAppSynchronize(CFSTR(BTPS_PREFS_DOMAIN));
-    v = CFPreferencesCopyAppValue(CFSTR("BTPhonoSinkV82DecisiveOnce"), CFSTR(BTPS_PREFS_DOMAIN));
+    v = CFPreferencesCopyAppValue(CFSTR("SpeakaV82DecisiveOnce"), CFSTR(BTPS_PREFS_DOMAIN));
     int clear = v && CFGetTypeID(v) == CFBooleanGetTypeID() && !CFBooleanGetValue((CFBooleanRef)v);
     if (v) CFRelease(v);
     BTPSSetStatus("diag.v82.arm", saved && clear ? "one-shot CONSUMED" : "REFUSED: cannot verify disarm");
@@ -1654,7 +1654,7 @@ static int btps_v89_receive_ready(void)
     BTPSV89SessionStart();   /* v8.9: Settings Start/Stop works even if every hook below is refused */
     BTPSSetStatus("diag.v89.build", "%s", BTPS_V89_BUILD_TAG);
     BTPSLog("V89 build %s: Start/Stop from Settings; output selection in BTPSAudioHelper", BTPS_V89_BUILD_TAG);
-    BTPSLogNow("BTPhonoSink %s loaded into %s pid %d (built %s %s)", BTPS_BUILD_TAG, prog, (int)getpid(), __DATE__, __TIME__);
+    BTPSLogNow("Speaka %s loaded into %s pid %d (built %s %s)", BTPS_BUILD_TAG, prog, (int)getpid(), __DATE__, __TIME__);
     BTPSSetStatus("build", "%s, %s %s", BTPS_BUILD_TAG, __DATE__, __TIME__);
     BTPSSetStatus("pid", "%d", (int)getpid());
     BTPSSetStatus("experiments", "off (v7 forced-passive, stored=%s)", BTPSExperimentsEnabled() ? "ON" : "off");

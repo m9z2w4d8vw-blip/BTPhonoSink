@@ -133,7 +133,7 @@ int main(int argc,const char **argv) {
         printf("BTPS_HELPER_MODE=%s\n",play_sbc_mode?"SBC_PLAY_DECODE_AND_OUTPUT":(sbc_mode?"SBC_VERIFY_ONLY_NO_SOUND":(daemon_mode?"PCM_DAEMON":"PCM_SETTINGS")));
         printf("BTPS_%s_READY pid=%ld port=%d token=%06u timeout=%ds\n",
                play_sbc_mode?"V76_SBC_PLAY":(sbc_mode?"V75_SBC":(daemon_mode?"V74_DAEMON":"V74_SETTINGS")),(long)getpid(),BTPS_IPC_PORT,token,seconds);
-        printf("On iPhone: Settings > BTPhonoSink > Debug log > %s; enter token %06u.\n",
+        printf("On iPhone: Settings > Speaka > Debug log > %s; enter token %06u.\n",
                sbc_mode?"Send SBC from bluetoothd (v7.5/7.6)":(daemon_mode?"Send PCM from bluetoothd (v7.4)":"Send PCM to separate helper (v7.3)"),token);
         fflush(stdout);
         fd_set set;FD_ZERO(&set);FD_SET(listener,&set);struct timeval timer={seconds,0};
@@ -164,7 +164,7 @@ int main(int argc,const char **argv) {
             /* Only a copy of the pre-generated SBC fixture is saved. No live RF capture.
              * A timestamp/PID suffix avoids clobbering an earlier test. */
             NSString *path=[NSHomeDirectory() stringByAppendingPathComponent:
-                 [NSString stringWithFormat:@"Documents/BTPhonoSink-v75-%ld-%lld.sbc",(long)getpid(),(long long)[[NSDate date] timeIntervalSince1970]]];
+                 [NSString stringWithFormat:@"Documents/Speaka-v75-%ld-%lld.sbc",(long)getpid(),(long long)[[NSDate date] timeIntervalSince1970]]];
             NSString *dir=[path stringByDeletingLastPathComponent];
             NSError *err=nil;
             [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:&err];
@@ -205,7 +205,7 @@ int main(int argc,const char **argv) {
                 NSData *wav=wav_from_sbc_pcm(pcm,nsamples);
                 if(!wav){free(pcm);puts("SBC_WAV_FAIL allocation");return 10;}
                 NSString *wav_path=[dir stringByAppendingPathComponent:
-                    [NSString stringWithFormat:@"BTPhonoSink-v76-%ld-%lld.wav",(long)getpid(),(long long)[[NSDate date] timeIntervalSince1970]]];
+                    [NSString stringWithFormat:@"Speaka-v76-%ld-%lld.wav",(long)getpid(),(long long)[[NSDate date] timeIntervalSince1970]]];
                 NSError *wav_error=nil;
                 BOOL saved_pcm=[wav writeToFile:wav_path options:NSDataWritingAtomic error:&wav_error];
                 if(saved_pcm)printf("SBC_DECODED_WAV_SAVED path=%s bytes=%zu\n",wav_path.UTF8String,(size_t)wav.length);

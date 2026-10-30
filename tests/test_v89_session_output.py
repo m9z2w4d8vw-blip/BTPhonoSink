@@ -144,10 +144,10 @@ int main(void) {
         self.assertLess(ctor.index("BTPSDaemonProbeStartV75();"), final)
         early = ctor.split("if (!find_main_image(&index, &mh)) {", 1)[1].split("return;", 1)[0]
         self.assertIn("BTPSV89SessionReport(0, 0);", early)
-        self.assertIn("BTPSV89Session.c", read("Makefile").split("BTPhonoSink_FILES", 1)[1].split("\n", 1)[0])
+        self.assertIn("BTPSV89Session.c", read("Makefile").split("Speaka_FILES", 1)[1].split("\n", 1)[0])
         # Settings, the tweak and the helper must agree on the literal the existing one-shot code consumes.
-        self.assertEqual(shared_define("BTPS_KEY_V82_DECISIVE_ONCE"), "BTPhonoSinkV82DecisiveOnce")
-        self.assertIn('CFSTR("BTPhonoSinkV82DecisiveOnce")', tweak)
+        self.assertEqual(shared_define("BTPS_KEY_V82_DECISIVE_ONCE"), "SpeakaV82DecisiveOnce")
+        self.assertIn('CFSTR("SpeakaV82DecisiveOnce")', tweak)
         self.assertIn("CFSTR(BTPS_KEY_V81_SEVEN_ONCE)", tweak)
 
     # ---------------------------------------------------------------- channel-scoped stream control (tweak)
@@ -297,9 +297,9 @@ int main(void) {
 
     # ---------------------------------------------------------------- Settings page
     def test_settings_page_wiring(self):
-        plist = plistlib.loads((ROOT / "btphonosinkprefs/Resources/Root.plist").read_bytes())
+        plist = plistlib.loads((ROOT / "speakaprefs/Resources/Root.plist").read_bytes())
         items = plist["items"]
-        controller = read("btphonosinkprefs/BTPSRootListController.m")
+        controller = read("speakaprefs/BTPSRootListController.m")
         # Every selector the plist names must exist, or tapping the row crashes Settings.
         for item in items:
             for field in ("get", "action"):
@@ -323,22 +323,22 @@ int main(void) {
         self.assertEqual(mode["detail"], "PSListItemsController")
         # The manual switches stay available as an alternative.
         keys = {item.get("key") for item in items}
-        self.assertTrue({"BTPhonoSinkV81SevenOnce", "BTPhonoSinkV82DecisiveOnce"} <= keys)
+        self.assertTrue({"SpeakaV81SevenOnce", "SpeakaV82DecisiveOnce"} <= keys)
         # Settings only writes the request; the tweak arms the switches after validating it.
         send = controller.split("- (void)sendSession:(NSString *)action", 1)[1].split("- (void)schedulePoll", 1)[0]
         self.assertLess(send.index("BTPSWritePref(@BTPS_KEY_V89_REQUEST, request)"),
                         send.index("notify_post(BTPS_NOTIFY_V89_SESSION)"))
-        for key in ("BTPS_KEY_V81_SEVEN_ONCE", "BTPS_KEY_V82_DECISIVE_ONCE", "BTPhonoSinkV81SevenOnce",
-                    "BTPhonoSinkV82DecisiveOnce"):
+        for key in ("BTPS_KEY_V81_SEVEN_ONCE", "BTPS_KEY_V82_DECISIVE_ONCE", "SpeakaV81SevenOnce",
+                    "SpeakaV82DecisiveOnce"):
             self.assertNotIn(key, controller)
         self.assertIn('[@"nonce=" stringByAppendingString:self.pendingNonce]', controller)
         never = controller.split("- (void)neverPlayCurrent:(id)specifier", 1)[1].split("- (void)clearNeverPlay:", 1)[0]
         self.assertLess(never.index("BTPSWritePref(@BTPS_KEY_V89_NEVER, list)"), never.index("notify_post(BTPS_NOTIFY_V89_OUTPUT)"))
-        self.assertIn("AVKit", read("btphonosinkprefs/Makefile"))
-        self.assertIn("- (void)reloadSpecifierID:(NSString *)specifierID;", read("btphonosinkprefs/BTPSRootListController.h"))
+        self.assertIn("AVKit", read("speakaprefs/Makefile"))
+        self.assertIn("- (void)reloadSpecifierID:(NSString *)specifierID;", read("speakaprefs/BTPSRootListController.h"))
 
     def test_settings_gates_start_on_daemon_version_and_never_advises_toggling(self):
-        controller = read("btphonosinkprefs/BTPSRootListController.m")
+        controller = read("speakaprefs/BTPSRootListController.m")
         # Start/Stop is only offered to a bluetoothd that actually contains the listener.
         confirm = controller.split("- (void)confirmSession:(NSString *)action", 1)[1].split("- (void)sendSession:", 1)[0]
         self.assertLess(confirm.index("daemonHasSessionListener"), confirm.index("presentViewController:alert"))
@@ -351,7 +351,7 @@ int main(void) {
         for advice in ("turn Bluetooth off and on", "Turn Bluetooth off and on", "toggle Bluetooth", "Airplane Mode off/on",
                        "auto-restart unavailable"):
             self.assertNotIn(advice, controller)
-        footer = [i for i in plistlib.loads((ROOT / "btphonosinkprefs/Resources/Root.plist").read_bytes())["items"]
+        footer = [i for i in plistlib.loads((ROOT / "speakaprefs/Resources/Root.plist").read_bytes())["items"]
                   if i.get("label") == "Bluetooth speaker"][0]["footerText"]
         self.assertIn("tap Start", footer)
         self.assertIn("off and on", footer)

@@ -1,4 +1,4 @@
-# BTPhonoSink v7.4 — bluetoothd → independent audio helper test
+# Speaka v7.4 — bluetoothd → independent audio helper test
 
 **Purpose:** Confirm whether the exact `bluetoothd` process that receives Bluetooth packets can send its **own synthetic** 0.8-second, 44.1 kHz, 16-bit mono 880 Hz PCM packet to the existing separate helper over **local loopback only**. No Bluetooth media packet is received, no Sink endpoint/SDP 0x110B record is installed, and no real Bluetooth audio is decoded. Normal outgoing Bluetooth stays as before.
 
@@ -15,7 +15,7 @@ This is a **diagnostic, explicit one-shot test**, NOT a music streaming feature.
    ```
 
    Adjust the IP if you change networks again.
-4. Open Settings → BTPhonoSink → View debug log. The current session must say `v7.4-daemon-to-helper-probe`, 5/5 original hooks, and 6/6 native Source endpoints. **Legacy Sink OFF.** For first testing, turn the optional SDP observer OFF (restart once after changing its switch). The status `diag.v74_ipc` should show **`ARMED: awaiting explicit Settings request`**.
+4. Open Settings → Speaka → View debug log. The current session must say `v7.4-daemon-to-helper-probe`, 5/5 original hooks, and 6/6 native Source endpoints. **Legacy Sink OFF.** For first testing, turn the optional SDP observer OFF (restart once after changing its switch). The status `diag.v74_ipc` should show **`ARMED: awaiting explicit Settings request`**.
 5. Test Bluetooth headphones with regular iPhone music. If damaged, remove the tweak or restore v7.3 and restart `bluetoothd`; do not proceed.
 
 ## v7.4 one-shot test
@@ -27,7 +27,7 @@ This is a **diagnostic, explicit one-shot test**, NOT a music streaming feature.
    ```
 
 7. Expect `BTPS_V74_DAEMON_READY ... token=NNNNNN ...`. This token changes each run; **do not reuse the one from v7.3**. There is a default 120-second window to submit it.
-8. On the iPhone open **Settings → BTPhonoSink → View debug log → Send PCM from bluetoothd (v7.4)**. Enter the new token, then tap **Request daemon transfer**. Unlike v7.3, the Settings app only writes the request preference and posts a Darwin notification; **it does not generate the test tone or open a socket**.
+8. On the iPhone open **Settings → Speaka → View debug log → Send PCM from bluetoothd (v7.4)**. Enter the new token, then tap **Request daemon transfer**. Unlike v7.3, the Settings app only writes the request preference and posts a Darwin notification; **it does not generate the test tone or open a socket**.
 9. Look in both places:
 
    **SSH helper output (success example, not an availability promise):**

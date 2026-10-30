@@ -1,4 +1,4 @@
-/* BTPhonoSink v7.4: explicit one-shot bluetoothd -> BTPSAudioHelper test.
+/* Speaka v7.4: explicit one-shot bluetoothd -> BTPSAudioHelper test.
  *
  * A Settings request is delivered by a Darwin notification. The notify
  * callback runs on an isolated serial dispatch queue, NEVER a Bluetooth hook
@@ -191,7 +191,7 @@ static void attempt_test(int notify_token)
 
 void BTPSDaemonProbeStart(void)
 {
-    g_v74_queue=dispatch_queue_create("com.parv.btphonosink.v74.ipc.worker",DISPATCH_QUEUE_SERIAL);
+    g_v74_queue=dispatch_queue_create("com.parv.speaka.v74.ipc.worker",DISPATCH_QUEUE_SERIAL);
     if(!g_v74_queue) {
         BTPSSetStatus("diag.v74_ipc","UNAVAILABLE: no worker queue");
         return;

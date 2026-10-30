@@ -1,4 +1,4 @@
-# BTPhonoSink - bluetoothd tweak for rootless jailbreaks (Dopamine / ElleKit)
+# Speaka - bluetoothd tweak for rootless jailbreaks (Dopamine / ElleKit)
 
 # Rootless: files install under /var/jb and the package architecture becomes iphoneos-arm64.
 # Rootful build instead:  make package THEOS_PACKAGE_SCHEME=
@@ -15,17 +15,17 @@ TARGET := iphone:clang:latest:15.0
 
 include $(THEOS)/makefiles/common.mk
 
-TWEAK_NAME = BTPhonoSink
+TWEAK_NAME = Speaka
 
-BTPhonoSink_FILES      = Tweak.xm BTPSV88Shared.c BTPSV88Control.c BTPSV88Daemon.c BTPSLog.c BTPSCore.c BTPSDiagnostics.c BTPSIPCProtocol.c BTPSDaemonProbe.c BTPSV74Tone.c BTPSV75Fixture.c BTPSV78Capacity.c BTPSV79Geometry.c BTPSV81Config.c BTPSV77Sink.c BTPSV82SDP.c SBCSink.mm sbc_decode.c BTPSMedia.c BTPSV89Session.c
-BTPhonoSink_CFLAGS     = -fobjc-arc -fvisibility=hidden -fblocks
-BTPhonoSink_CCFLAGS    = -std=c++17 -fobjc-arc -fvisibility=hidden
-BTPhonoSink_FRAMEWORKS = AVFoundation AudioToolbox CoreAudio CoreFoundation Foundation
-BTPhonoSink_LIBRARIES  = substrate
+Speaka_FILES      = Tweak.xm BTPSV88Shared.c BTPSV88Control.c BTPSV88Daemon.c BTPSLog.c BTPSCore.c BTPSDiagnostics.c BTPSIPCProtocol.c BTPSDaemonProbe.c BTPSV74Tone.c BTPSV75Fixture.c BTPSV78Capacity.c BTPSV79Geometry.c BTPSV81Config.c BTPSV77Sink.c BTPSV82SDP.c SBCSink.mm sbc_decode.c BTPSMedia.c BTPSV89Session.c
+Speaka_CFLAGS     = -fobjc-arc -fvisibility=hidden -fblocks
+Speaka_CCFLAGS    = -std=c++17 -fobjc-arc -fvisibility=hidden
+Speaka_FRAMEWORKS = AVFoundation AudioToolbox CoreAudio CoreFoundation Foundation
+Speaka_LIBRARIES  = substrate
 
 include $(THEOS)/makefiles/tweak.mk
 
-# The Settings > Tweaks page with the debug log (folder btphonosinkprefs/).
+# The Settings > Tweaks page with the debug log (folder speakaprefs/).
 # If it ever fails to build, set this to 0 (or run: make package BTPS_WITH_PREFS=0) and the tweak still builds.
 BTPS_WITH_PREFS ?= 1
 # The auxiliary diagnostic executable never runs inside bluetoothd.
@@ -34,7 +34,7 @@ ifeq ($(BTPS_WITH_IPC_HELPER),1)
 SUBPROJECTS += btpsaudiohelper
 endif
 ifeq ($(BTPS_WITH_PREFS),1)
-SUBPROJECTS += btphonosinkprefs
+SUBPROJECTS += speakaprefs
 endif
 
 # The helper and optional Settings bundle participate in the same package.

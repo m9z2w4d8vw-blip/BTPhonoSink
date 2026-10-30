@@ -8,8 +8,8 @@ out="$root/btpsaudiohelper/vendor_sbc"
 # An earlier Actions run must not accidentally reuse stale or partial files.
 if [[ -f "$out/UPSTREAM_COMMIT" ]] && [[ "$(cat "$out/UPSTREAM_COMMIT")" == "$commit" ]] && \
    [[ -s "$out/sbc.c" && -s "$out/sbc.h" && -s "$out/bits.c" && -s "$out/bits.h" && -s "$out/LICENSE" ]]; then
-    mkdir -p "$root/layout/usr/share/doc/BTPhonoSink"
-    cp "$out/LICENSE" "$root/layout/usr/share/doc/BTPhonoSink/Google-libsbc-LICENSE.txt"
+    mkdir -p "$root/layout/usr/share/doc/Speaka"
+    cp "$out/LICENSE" "$root/layout/usr/share/doc/Speaka/Google-libsbc-LICENSE.txt"
     echo "Using existing Google libsbc at pinned commit $commit"
     exit 0
 fi
@@ -28,6 +28,6 @@ done
 mkdir -p "$out"
 cp "$work/src/src/sbc.c" "$work/src/src/bits.c" "$work/src/src/bits.h" "$work/src/include/sbc.h" "$work/src/LICENSE" "$out/"
 printf '%s\n' "$actual" > "$out/UPSTREAM_COMMIT"
-mkdir -p "$root/layout/usr/share/doc/BTPhonoSink"
-cp "$out/LICENSE" "$root/layout/usr/share/doc/BTPhonoSink/Google-libsbc-LICENSE.txt"
+mkdir -p "$root/layout/usr/share/doc/Speaka"
+cp "$out/LICENSE" "$root/layout/usr/share/doc/Speaka/Google-libsbc-LICENSE.txt"
 echo "Vendored Google SBC $actual into $out"

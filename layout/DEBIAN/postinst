@@ -5,12 +5,12 @@ if [ "$1" = configure ]; then
         mkdir -m 0777 /tmp/FTABHarvest
         chown mobile:mobile /tmp/FTABHarvest
     fi
-    plist=/var/jb/Library/LaunchDaemons/com.parv.btphonosink.audio.plist
+    plist=/var/jb/Library/LaunchDaemons/com.parv.speaka.audio.plist
     chown root:wheel "$plist"
     chmod 644 "$plist"
-    launchctl bootout system/com.parv.btphonosink.audio >/dev/null 2>&1 || true
+    launchctl bootout system/com.parv.speaka.audio >/dev/null 2>&1 || true
     launchctl bootstrap system "$plist" || {
-        echo 'Speaka: the audio helper could not be registered with launchd; check launchctl before starting the speaker.' >&2
+        echo 'Speaka: the audio helper could not start. If an older copy of this tweak is still installed under its previous package name, remove that package first (dpkg -l lists it), then reinstall Speaka.' >&2
         exit 1
     }
     # Load the newly installed tweak into bluetoothd now. Installing a package does not restart running daemons:

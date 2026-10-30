@@ -1,5 +1,6 @@
 """The Speaka companion app (app/): it must speak exactly the tweak's protocol, agree with the Settings page, and
 package correctly for TrollStore. The Objective-C is first compiled by CI, so these checks run before that."""
+import hashlib
 import pathlib
 import plistlib
 import re
@@ -42,13 +43,13 @@ class SpeakaApp(unittest.TestCase):
         # Names come from BTPSShared.h only: no hand-typed keys or notification names anywhere in the app.
         for source in SOURCES:
             text = read(source)
-            self.assertNotRegex(text, r'@"BTPhonoSink[A-Z]\w*"', source.name)
-            self.assertNotIn('"com.parv.btphonosink.', text, source.name)
+            self.assertNotRegex(text, r'@"Speaka[A-Z]\w*"', source.name)
+            self.assertNotIn('"com.parv.speaka.', text, source.name)
             self.assertNotIn('"com.apple.bluetooth"', text, source.name)
 
     def test_session_rules_match_the_settings_page(self):
         client = read(APP / "Speaka/Model/SPTweakClient.m")
-        settings = read(ROOT / "btphonosinkprefs/BTPSRootListController.m")
+        settings = read(ROOT / "speakaprefs/BTPSRootListController.m")
         bad = r'@\[ (@"REFUSED", @"ROLLED BACK", @"UNSAFE", @"FAILED", @"SDP publish failed") \]'
         self.assertEqual(re.search(bad, client).group(1), re.search(bad, settings).group(1))
         for rule in ('[sep hasPrefix:@"LOST"]', '[trial hasPrefix:@"ARMED"]', '[trial hasPrefix:@"REFUSED"]',
@@ -62,8 +63,8 @@ class SpeakaApp(unittest.TestCase):
         self.assertIn("self.pendingRelaunched ? 45.0 : 25.0", settings)
 
     def test_output_modes_match_the_settings_page(self):
-        plist = plistlib.loads((ROOT / "btphonosinkprefs/Resources/Root.plist").read_bytes())
-        item = next(i for i in plist["items"] if i.get("key") == "BTPhonoSinkV89OutputMode")
+        plist = plistlib.loads((ROOT / "speakaprefs/Resources/Root.plist").read_bytes())
+        item = next(i for i in plist["items"] if i.get("key") == "SpeakaV89OutputMode")
         client = read(APP / "Speaka/Model/SPTweakClient.m")
         modes = client.split("+ (NSArray<NSDictionary<NSString *, NSString *> *> *)outputModes", 1)[1].split("];", 1)[0]
         keys = re.findall(r'@"key": @"([^"]+)"', modes)
@@ -198,29 +199,50 @@ class SpeakaApp(unittest.TestCase):
         self.assertIn("sudo dpkg -i ${deb_name}", release)
         self.assertIn('if [ -f dist/Speaka.tipa ] && [ -f dist/Speaka.ipa ]; then', release)
 
-    def test_everything_the_user_sees_is_called_speaka(self):
+    def test_everything_is_called_speaka(self):
         control = read(ROOT / "control")
+        self.assertIn("Package: com.parv.speaka\n", control)
         self.assertIn("Name: Speaka\n", control)
-        self.assertIn("Package: com.parv.btphonosink\n", control)   # unchanged: upgrades install in place
-        entry = plistlib.loads((ROOT / "layout/Library/PreferenceLoader/Preferences/BTPhonoSinkPrefs.plist").read_bytes())
+        self.assertIn("TWEAK_NAME = Speaka\n", read(ROOT / "Makefile"))
+        self.assertTrue((ROOT / "Speaka.plist").is_file())                   # the injection filter for Speaka.dylib
+        entry = plistlib.loads((ROOT / "layout/Library/PreferenceLoader/Preferences/SpeakaPrefs.plist").read_bytes())
         self.assertEqual(entry["entry"]["label"], "Speaka")
-        root = plistlib.loads((ROOT / "btphonosinkprefs/Resources/Root.plist").read_bytes())
+        self.assertEqual(entry["entry"]["bundle"], "SpeakaPrefs")
+        self.assertIn("BUNDLE_NAME = SpeakaPrefs", read(ROOT / "speakaprefs/Makefile"))
+        root = plistlib.loads((ROOT / "speakaprefs/Resources/Root.plist").read_bytes())
         self.assertEqual(root["title"], "Speaka")
+        job = plistlib.loads((ROOT / "layout/Library/LaunchDaemons/com.parv.speaka.audio.plist").read_bytes())
+        self.assertEqual(job["Label"], "com.parv.speaka.audio")
         for name, pixels in (("icon.png", 29), ("icon@2x.png", 58), ("icon@3x.png", 87)):
-            self.assertEqual(png_size(ROOT / "btphonosinkprefs/Resources" / name), (pixels, pixels))
+            self.assertEqual(png_size(ROOT / "speakaprefs/Resources" / name), (pixels, pixels))
         for line in read(ROOT / "layout/DEBIAN/postinst").splitlines():
             if line.strip().startswith("echo '"):
                 self.assertTrue(line.strip().startswith("echo 'Speaka: "), line)
-        # No visible string in the app or the Settings bundle still says BTPhonoSink (identifiers may).
-        for source in list(SOURCES) + sorted((ROOT / "btphonosinkprefs").glob("*.m")):
-            for literal in re.findall(r'@"([^"]*)"', read(source)):
-                if "BTPhonoSink" in literal:
-                    self.assertRegex(literal, r"^BTPhonoSink(V\d|Prefs|Status|Log|Experiments|SDPProbe)\w*$",
-                                     f"{source.name}: {literal}")
         workflow = read(ROOT / ".github/workflows/build.yml")
         self.assertIn('cp "$deb" "dist/Speaka_${name#*_}"', workflow)
-        self.assertEqual(workflow.count("name: Speaka-deb\n"), 2)       # uploaded by build, downloaded by release
-        self.assertNotIn("BTPhonoSink-deb", workflow)
+        self.assertEqual(workflow.count("name: Speaka-deb\n"), 2)            # uploaded by build, downloaded by release
+
+    def test_the_former_name_appears_nowhere(self):
+        """Neither file contents nor paths contain the project's former name. Only its SHA-256 is stored here, so this
+        file does not contain it either: every 11-letter run that starts with b and ends with k is checked."""
+        digest = "40fe101ac2bc16ab238f8426f9059ef2a21ad8b0067acb562d40a7e2b65c6d90"
+        def hits(text):
+            text = text.lower()
+            for i in range(len(text) - 10):
+                if text[i] == "b" and text[i + 10] == "k" and \
+                        hashlib.sha256(text[i:i + 11].encode()).hexdigest() == digest:
+                    yield i
+        skip = {".git", "__pycache__", ".theos", "packages", "obj"}
+        for path in ROOT.rglob("*"):
+            rel = path.relative_to(ROOT)
+            if skip.intersection(rel.parts):
+                continue
+            self.assertFalse(any(hits(rel.as_posix())), f"path {rel}")
+            if path.is_file():
+                data = path.read_bytes()
+                text = data.decode("latin-1")                            # binary-safe; the name is plain ASCII
+                found = next(hits(text), None)
+                self.assertIsNone(found, f"{rel}: the former name at offset {found}")
 
     def test_buttons_whose_text_changes_keep_it_in_their_configuration(self):
         # With a primary action UIKit re-applies the action's title, so "Start" never became "Running".

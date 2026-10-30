@@ -1,4 +1,4 @@
-# BTPhonoSink v7.1 — One combined install: iCloud export + SDP research + media foundation
+# Speaka v7.1 — One combined install: iCloud export + SDP research + media foundation
 
 ## What is implemented
 
@@ -13,7 +13,7 @@
 ## Build and install
 
 1. Preserve the **previously working v6 .deb** as a rollback option.
-2. Unzip this source archive. Upload the **contents** of its `BTPhonoSink-main/`
+2. Unzip this source archive. Upload the **contents** of its `Speaka-main/`
    folder, including `.github/`, to the root of your GitHub repo, overwriting
    matching files. Do not upload the ZIP as a single file.
 3. Commit to `main`; GitHub Actions runs Python and compiled-C tests, builds the
@@ -21,7 +21,7 @@
 4. Check the Action run for errors. Download the .deb from the NEW nightly release;
    install using your usual package installer.
 5. Fully close and reopen Settings to load the new Preferences UI.
-6. On iPhone, go to Settings → BTPhonoSink. **Leave the optional SDP probe OFF.**
+6. On iPhone, go to Settings → Speaka. **Leave the optional SDP probe OFF.**
 7. Restart bluetoothd once (your PowerShell command, on your own network):
 
    `ssh -t mobile@10.5.79.217 "sudo killall -9 bluetoothd"`
@@ -33,10 +33,10 @@
 
 ## Test iCloud Drive export
 
-1. In Settings → BTPhonoSink → View debug log, tap **Save Log to iCloud Drive…**.
+1. In Settings → Speaka → View debug log, tap **Save Log to iCloud Drive…**.
 2. The Files picker opens. Select **iCloud Drive** (not On My iPhone), choose a
    folder, tap Save/Move as offered by iOS.
-3. Open Files → Browse → iCloud Drive and confirm a new `BTPhonoSink-*.txt` file
+3. Open Files → Browse → iCloud Drive and confirm a new `Speaka-*.txt` file
    exists and contains the same STATUS + LOG content as the screen.
 4. This saves a snapshot via Files; it does not automatically transmit logs or
    bypass the iOS file picker. You can then share that file in chat.
@@ -44,7 +44,7 @@
 ## Optional: collect SDP service-add evidence
 
 1. Only after the above baseline succeeds, enable **Trace existing SDP records
-   (advanced)** in Settings → BTPhonoSink.
+   (advanced)** in Settings → Speaka.
 2. Restart bluetoothd with the same command. A sixth SDP observer should report
    `diag.sdp_probe: installed (optional 6th hook, non-mutating)`.
 3. Wait for the daemon to initialize, connect headphones and verify playback.

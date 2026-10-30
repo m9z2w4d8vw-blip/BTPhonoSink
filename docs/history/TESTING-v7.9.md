@@ -1,10 +1,10 @@
-# BTPhonoSink v7.9 — read-only allocation geometry audit
+# Speaka v7.9 — read-only allocation geometry audit
 
 This build **does not expand endpoint capacity**. It validates the existing initializer's
 allocation sizes and configured counts on the device, before attempting any write in a future
 build. The v7.7 Sink trial remains retired and cannot run, even if a preference is still ON.
 
-1. Apply `BTPhonoSink-v7.9-patch.zip` file contents **inside their matching folders**
+1. Apply `Speaka-v7.9-patch.zip` file contents **inside their matching folders**
    in your current GitHub repository. If using GitHub web upload, do not upload the ZIP itself:
    upload individual changed files, including `.github` only if present in this patch.
 2. Commit to `main`, confirm GitHub Actions is green, install the new `.deb` via Sileo.
@@ -18,7 +18,7 @@ build. The v7.7 Sink trial remains retired and cannot run, even if a preference 
    ```
    Update the IP if you changed Wi-Fi networks.
 5. Reconnect your headphones and confirm actual audio plays normally. Open Settings →
-   BTPhonoSink → View debug log. Expect `v7.9-readonly-allocator-audit`, five baseline hooks,
+   Speaka → View debug log. Expect `v7.9-readonly-allocator-audit`, five baseline hooks,
    six native Source registrations, plus `V78_TABLE RESULT` and `V79_ALLOC RESULT`.
 6. Look for `diag.v79_allocator: READ-ONLY config=(...) live=(...) request_bytes=(...)`.
    `config=(6,...)` and `live=(6,...)` would confirm the allocation's first dimension;

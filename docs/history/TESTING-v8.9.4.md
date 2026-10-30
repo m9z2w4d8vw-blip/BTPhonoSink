@@ -72,7 +72,7 @@ BTPSV88Daemon.c
 README.md
 TESTING-v8.9.4.md                          (new)
 Tweak.xm
-btphonosinkprefs/Resources/Root.plist
+speakaprefs/Resources/Root.plist
 btpsaudiohelper/BTPSV88Stream.m
 btpsaudiohelper/BTPSV89Output.h
 tests/test_v881_audio_output.py

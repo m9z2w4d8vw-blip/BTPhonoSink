@@ -1,4 +1,4 @@
-# BTPhonoSink v7.6.1 — Helper playback diagnostics and limited gain
+# Speaka v7.6.1 — Helper playback diagnostics and limited gain
 
 This is a **helper-only** patch to the verified v7.6 source; the tweak's build tag remains `v7.6-sbc-playback`. It does not change the AVDTP or SDP hooks and does not receive live Bluetooth audio.
 
@@ -19,7 +19,7 @@ ssh -t mobile@10.5.82.212 "/var/jb/usr/bin/BTPSAudioHelper --sbc-play"
 ```
 
 5. Verify the first line is `BTPS_HELPER_MODE=SBC_PLAY_DECODE_AND_OUTPUT`. If it says `SBC_VERIFY_ONLY_NO_SOUND`, you ran `--sbc` instead and silence is expected.
-6. Within 120 seconds, in iPhone Settings > BTPhonoSink > Debug log, press `Send SBC from bluetoothd (v7.5/7.6)` and enter the fresh token.
+6. Within 120 seconds, in iPhone Settings > Speaka > Debug log, press `Send SBC from bluetoothd (v7.5/7.6)` and enter the fresh token.
 7. Copy **the entire PowerShell output** back to the conversation. In particular include `SBC_DECODE_PASS/FAIL`, `SBC_AUDIO_PREP`, `SBC_AUDIO_ROUTE`, `SBC_AUDIO_STARTED/FINISHED`, and `BTPS_V76_RESULT`. State if the 440 Hz tone was audible.
 
 **If the helper prints `SBC_DECODE_FAIL`**: decoding failed and playback never ran. **If it prints `SBC_FIDELITY_FAIL`**: playback was deliberately skipped. **If it prints `AUDIO_FAIL`**: playback initialization failed. **If it prints `SBC_AUDIO_FINISHED` but you hear nothing**, investigate routing and device volume; the API completing is not proof of sound. The daemon's `diag.v75_sbc: PASS` alone is not sufficient evidence for any of these stages.

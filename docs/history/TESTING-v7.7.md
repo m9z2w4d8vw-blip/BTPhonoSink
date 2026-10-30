@@ -1,11 +1,11 @@
-# BTPhonoSink v7.7 — two-phase testing
+# Speaka v7.7 — two-phase testing
 
 **Do not immediately turn ON the new experiment after installing.** This build executes private AVDTP registration only when the *separate* v7.7 toggle is enabled **at daemon launch**. It may cause Bluetooth instability. v7.6.1 is the rollback package. No actual Windows-to-iPhone A2DP playback exists yet.
 
 ## Phase A: safe baseline (mandatory)
 
 1. Upload only the changed files from the v7.7 patch or push the complete repository with Git on Windows. Commit on `main`. Confirm GitHub Actions tests/build succeed; install the fresh `.deb` with Sileo.
-2. In Settings → BTPhonoSink keep **Legacy sink experiment flag OFF**, **Trace existing SDP records OFF**, and **Trial extra Sink endpoint (advanced) OFF**.
+2. In Settings → Speaka keep **Legacy sink experiment flag OFF**, **Trace existing SDP records OFF**, and **Trial extra Sink endpoint (advanced) OFF**.
 3. Restart Bluetooth if necessary, via Windows PowerShell:
 
 ```powershell

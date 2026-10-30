@@ -1,5 +1,5 @@
 /* Live SBC is decoded and played only in this auxiliary process.
- * v8.9: the output follows Settings > BTPhonoSink > Audio output - the built-in speaker (default), headphones
+ * v8.9: the output follows Settings > Speaka > Audio output - the built-in speaker (default), headphones
  * only, or any device iOS is using - minus a user-maintained never-play list. Policy: BTPSV89Output.h. */
 #import <Foundation/Foundation.h>
 #import <AVFoundation/AVFoundation.h>
@@ -180,7 +180,7 @@ static void publish_status(NSString *state,NSString *reason,BOOL force) {
     NSDictionary *status=@{@"version":@1,@"state":state,@"reason":reason,
         @"mode":@(btps_v89_mode_name(g_output_mode)),@"outputs":outputs,@"volume":@(session.outputVolume),
         @"time":@([[NSDate date] timeIntervalSince1970]),@"pid":@(getpid())};
-    if(!g_status_queue) g_status_queue=dispatch_queue_create("com.parv.btphonosink.helper.status",DISPATCH_QUEUE_SERIAL);
+    if(!g_status_queue) g_status_queue=dispatch_queue_create("com.parv.speaka.helper.status",DISPATCH_QUEUE_SERIAL);
     dispatch_async(g_status_queue,^{
         CFPreferencesSetAppValue(CFSTR(BTPS_KEY_V89_HELPER),(__bridge CFPropertyListRef)status,CFSTR(BTPS_PREFS_DOMAIN));
         (void)CFPreferencesAppSynchronize(CFSTR(BTPS_PREFS_DOMAIN));
@@ -559,7 +559,7 @@ static void stream(int fd) {
     munmap(s,sizeof *s);close(file);
 }
 int BTPSV88StreamMain(void) {
-    hlog(stdout,"V889_HELPER build=v8.9.4-output-select (v8.8.2 idle guard retained)\n");fflush(stdout);
+    hlog(stdout,"V889_HELPER build=v9.0.0-output-select (v8.8.2 idle guard retained)\n");fflush(stdout);
     int (*activate)(const char *,int **,size_t *)=dlsym(RTLD_DEFAULT,"launch_activate_socket");
     int *fds=NULL;size_t count=0;
     if(!activate || activate("Stream",&fds,&count) || !count) {

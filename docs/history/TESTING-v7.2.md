@@ -1,4 +1,4 @@
-# BTPhonoSink v7.2 — verified test sequence
+# Speaka v7.2 — verified test sequence
 
 1. Keep **Legacy sink experiment flag** OFF (it must NEVER be enabled).
 2. Keep your prior working v7.1 `.deb` for rollback.

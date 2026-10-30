@@ -1,4 +1,4 @@
-# BTPhonoSink v8.6 — One-shot, receive-only media CID trial
+# Speaka v8.6 — One-shot, receive-only media CID trial
 
 **Purpose:** determine whether live RTP-like AVDTP media bytes reach the incoming
 L2CAP media handler on this exact iOS `bluetoothd` build. Do **not** decode,
@@ -45,7 +45,7 @@ L2CAP tracing is required to prove the remote-to-local connection pairing.
 2. Enable the two switches and ensure Legacy Sink is OFF.
 3. Restart `bluetoothd` **once** using the current device IP, for example:
    `ssh -t mobile@10.5.106.42 "sudo killall -9 bluetoothd"`.
-4. Before Windows playback, inspect Settings > BTPhonoSink > Debug Log:
+4. Before Windows playback, inspect Settings > Speaka > Debug Log:
    expect `V86 MEDIA hook installed`, `V83 AUDIO_TABLE SWAPPED`,
    `V83 SEP RESULT ret=0 seid=7`, and `V83 SDP add ret=0`.
    If the media hook is refused or missing, **stop** and export the log.

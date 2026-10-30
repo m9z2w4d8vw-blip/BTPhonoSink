@@ -1,11 +1,11 @@
-# BTPhonoSink v7 — optional SDP registration observation
+# Speaka v7 — optional SDP registration observation
 
 This version adds **zero AVDTP Sink endpoints**, publishes **zero 0x110B SDP records**, and does **not** receive/play Bluetooth media. It preserves the five working v6 hooks. It adds a separately opt-in, **sixth pass-through hook** for an iOS 17 private SDP record-add routine, researched from the exact `bluetoothd` image in `BTPSBuild.h`.
 
 ## Stage 1 — verify safe baseline (SDP observer OFF)
 
 1. Back up the working v6 `.deb`. Extract this repository ZIP, upload its contents (including `.github`) to your GitHub repo, commit, and verify GitHub Actions builds a new `.deb` successfully. Download the newly built `.deb` from the `nightly` release, checking its version/date.
-2. Keep **Trace existing SDP records (advanced)** **OFF** (the default) in Settings > BTPhonoSink. Install the new `.deb` and restart `bluetoothd` **once** to load it: `ssh -t mobile@10.5.79.217 "sudo killall -9 bluetoothd"` (only if the iPhone is still reachable at that IP). Reboot/re-jailbreak with Dopamine if necessary.
+2. Keep **Trace existing SDP records (advanced)** **OFF** (the default) in Settings > Speaka. Install the new `.deb` and restart `bluetoothd` **once** to load it: `ssh -t mobile@10.5.79.217 "sudo killall -9 bluetoothd"` (only if the iPhone is still reachable at that IP). Reboot/re-jailbreak with Dopamine if necessary.
 3. Check Debug log: `build: v7-sdp-probe`, five original hooks installed, six native Sources accepted with SEIDs 1..6, and `diag.sdp_probe: OFF (default); no SDP hook installed`. Confirm Bluetooth headphone playback still works. If anything fails, **do not proceed to Stage 2**.
 
 ## Stage 2 — experimental passive SDP observer (opt-in)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline interpreter for BTPhonoSink v5/v6 exported Settings logs.
+"""Offline interpreter for Speaka v5/v6 exported Settings logs.
 
 This utility *does not* access an iPhone or modify Bluetooth. Its conclusions
 are conservative, distinguish observation from implementation, and use no cloud.

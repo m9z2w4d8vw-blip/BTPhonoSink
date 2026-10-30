@@ -19,7 +19,7 @@ under the observed sandbox restrictions.
 3. `BTPSMedia.c`'s `btps_media_decode_rtp_sbc`: decodes SBC frames into caller-owned,
    stereo-interleaved 16-bit PCM using the project's existing research decoder. PCM
    capacity is validated before any frame is decoded.
-4. `SBCSink.mm`: `btphonosink_on_rtp_packet()` can feed such decoded PCM into the
+4. `SBCSink.mm`: `speaka_on_rtp_packet()` can feed such decoded PCM into the
    existing ring buffer, conditional on the audio engine having been started in an
    output-authorized process. **No daemon hook calls it yet**.
 5. `tools/decode_rtp_sbc.py`: host-side offline converter of *one complete raw RTP

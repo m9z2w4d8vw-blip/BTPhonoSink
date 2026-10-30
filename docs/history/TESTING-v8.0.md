@@ -1,4 +1,4 @@
-# BTPhonoSink v8.0 — read-only AVDTP configuration lookup timing probe
+# Speaka v8.0 — read-only AVDTP configuration lookup timing probe
 
 ## Purpose
 

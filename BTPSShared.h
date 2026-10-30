@@ -14,24 +14,24 @@
 #include <stdint.h>
 
 #define BTPS_PREFS_DOMAIN     "com.apple.bluetooth"
-#define BTPS_KEY_LOG          "BTPhonoSinkLog"           /* array of strings: the newest log lines            */
-#define BTPS_KEY_STATUS       "BTPhonoSinkStatus"        /* dictionary string -> string: self-test + hook state */
-#define BTPS_KEY_V77_SINK_TRIAL "BTPhonoSinkV77SinkTrial" /* OFF by default; one attempt after native Sources */
-#define BTPS_KEY_SDP_PROBE    "BTPhonoSinkSDPProbe"   /* OFF by default; optional read-only hook */
-#define BTPS_KEY_V81_SEVEN_ONCE "BTPhonoSinkV81SevenOnce" /* OFF by default, consumed before use */
-#define BTPS_KEY_V80_CFG_OBSERVER "BTPhonoSinkV80ConfigLookupObserver" /* OFF: pass-through getter timing observer */
-#define BTPS_KEY_EXPERIMENTS  "BTPhonoSinkExperiments"   /* boolean, flipped by the switch in the Settings pane */
+#define BTPS_KEY_LOG          "SpeakaLog"           /* array of strings: the newest log lines            */
+#define BTPS_KEY_STATUS       "SpeakaStatus"        /* dictionary string -> string: self-test + hook state */
+#define BTPS_KEY_V77_SINK_TRIAL "SpeakaV77SinkTrial" /* OFF by default; one attempt after native Sources */
+#define BTPS_KEY_SDP_PROBE    "SpeakaSDPProbe"   /* OFF by default; optional read-only hook */
+#define BTPS_KEY_V81_SEVEN_ONCE "SpeakaV81SevenOnce" /* OFF by default, consumed before use */
+#define BTPS_KEY_V80_CFG_OBSERVER "SpeakaV80ConfigLookupObserver" /* OFF: pass-through getter timing observer */
+#define BTPS_KEY_EXPERIMENTS  "SpeakaExperiments"   /* boolean, flipped by the switch in the Settings pane */
 
 #define BTPS_LOG_DIR_TMP      "/tmp/FTABHarvest"
-#define BTPS_LOG_FILE_TMP     "/tmp/FTABHarvest/BTPhonoSink.log"
-#define BTPS_LOG_FILE_ALT     "/var/mobile/Library/Logs/BTPhonoSink.log"
+#define BTPS_LOG_FILE_TMP     "/tmp/FTABHarvest/Speaka.log"
+#define BTPS_LOG_FILE_ALT     "/var/mobile/Library/Logs/Speaka.log"
 #define BTPS_HELPER_LOG_FILE  "/tmp/FTABHarvest/BTPSAudioHelper-v88.log"  /* launchd StandardOutPath of the helper */
 
-#define BTPS_NOTIFY_STATE     "com.parv.btphonosink.state"
-#define BTPS_NOTIFY_DAEMON_PROBE "com.parv.btphonosink.v74.ipc.request"
-#define BTPS_KEY_DAEMON_PROBE "BTPhonoSinkV74IPCRequest"
-#define BTPS_NOTIFY_V75_SBC "com.parv.btphonosink.v75.sbc.request"
-#define BTPS_KEY_V75_SBC "BTPhonoSinkV75SBCRequest"
+#define BTPS_NOTIFY_STATE     "com.parv.speaka.state"
+#define BTPS_NOTIFY_DAEMON_PROBE "com.parv.speaka.v74.ipc.request"
+#define BTPS_KEY_DAEMON_PROBE "SpeakaV74IPCRequest"
+#define BTPS_NOTIFY_V75_SBC "com.parv.speaka.v75.sbc.request"
+#define BTPS_KEY_V75_SBC "SpeakaV75SBCRequest"
 
 /* ---- v8.9: one-tap Start/Stop and audio output selection ---------------------------------------------------
  * Start/Stop: Settings writes BTPS_KEY_V89_REQUEST and posts BTPS_NOTIFY_V89_SESSION. The tweak inside bluetoothd
@@ -39,15 +39,15 @@
  * relaunched daemon reports the result under BTPS_STATUS_V89_SESSION, matched to the request by its nonce.
  * Output: Settings stores the mode and a "never play to" list; BTPSAudioHelper reads them, re-reads them when
  * BTPS_NOTIFY_V89_OUTPUT is posted, and publishes what is playing where under BTPS_KEY_V89_HELPER. */
-#define BTPS_KEY_V82_DECISIVE_ONCE "BTPhonoSinkV82DecisiveOnce"  /* same literal Tweak.xm consumes at launch */
-#define BTPS_NOTIFY_V89_SESSION    "com.parv.btphonosink.v89.session"
-#define BTPS_KEY_V89_REQUEST       "BTPhonoSinkV89SessionRequest" /* {action,nonce,time}; consumed by the tweak */
-#define BTPS_KEY_V89_PENDING       "BTPhonoSinkV89SessionPending" /* carried across the restart; consumed */
+#define BTPS_KEY_V82_DECISIVE_ONCE "SpeakaV82DecisiveOnce"  /* same literal Tweak.xm consumes at launch */
+#define BTPS_NOTIFY_V89_SESSION    "com.parv.speaka.v89.session"
+#define BTPS_KEY_V89_REQUEST       "SpeakaV89SessionRequest" /* {action,nonce,time}; consumed by the tweak */
+#define BTPS_KEY_V89_PENDING       "SpeakaV89SessionPending" /* carried across the restart; consumed */
 #define BTPS_STATUS_V89_SESSION    "diag.v89.session"
-#define BTPS_NOTIFY_V89_OUTPUT     "com.parv.btphonosink.v89.output"
-#define BTPS_KEY_V89_OUTPUT_MODE   "BTPhonoSinkV89OutputMode"     /* "speaker" (default) | "headphones" | "any" */
-#define BTPS_KEY_V89_NEVER         "BTPhonoSinkV89NeverOutputs"   /* array of {uid,name}: never play there */
-#define BTPS_KEY_V89_HELPER        "BTPhonoSinkV89HelperStatus"   /* written by BTPSAudioHelper for Settings */
+#define BTPS_NOTIFY_V89_OUTPUT     "com.parv.speaka.v89.output"
+#define BTPS_KEY_V89_OUTPUT_MODE   "SpeakaV89OutputMode"     /* "speaker" (default) | "headphones" | "any" */
+#define BTPS_KEY_V89_NEVER         "SpeakaV89NeverOutputs"   /* array of {uid,name}: never play there */
+#define BTPS_KEY_V89_HELPER        "SpeakaV89HelperStatus"   /* written by BTPSAudioHelper for Settings */
 
 /* ---- the 64-bit notification state word ---------------------------------------------------------------------
  * bit 0  tweak loaded in the daemon      bit 1  UUID matched the analysed build     bit 2  experiments enabled

@@ -3,7 +3,7 @@ import pathlib
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-UI = (ROOT / 'btphonosinkprefs' / 'BTPSLogViewController.m').read_text()
+UI = (ROOT / 'speakaprefs' / 'BTPSLogViewController.m').read_text()
 
 class ICloudExportTests(unittest.TestCase):
     def test_export_is_in_settings_not_daemon(self):

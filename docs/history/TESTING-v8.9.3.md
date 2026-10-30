@@ -76,8 +76,8 @@ README.md
 TESTING-v8.9.3.md                         (new)
 Tweak.xm
 btpsaudiohelper/BTPSV88Stream.m
-btphonosinkprefs/BTPSLogReader.m
-btphonosinkprefs/BTPSRootListController.m
+speakaprefs/BTPSLogReader.m
+speakaprefs/BTPSRootListController.m
 tests/test_v893_diagnostics.py            (new)
 ```
 

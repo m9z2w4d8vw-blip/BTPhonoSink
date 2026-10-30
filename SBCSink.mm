@@ -4,7 +4,7 @@
 #include <os/log.h>
 #include <pthread.h>
 
-#define LOG_SINK(fmt, ...) os_log(OS_LOG_DEFAULT, "[BTPhonoSink] " fmt, ##__VA_ARGS__)
+#define LOG_SINK(fmt, ...) os_log(OS_LOG_DEFAULT, "[Speaka] " fmt, ##__VA_ARGS__)
 
 /* -------------------------------------------------------------------------
  * Mutex-protected ring buffer for decoded PCM
@@ -70,7 +70,7 @@ static int                 g_running      = 0;
 #define DECODE_SCRATCH (BTPS_MEDIA_MAX_FRAMES * 16 * 8 * 2) /* worst case 15 SBC frames */
 static int16_t g_decode_scratch[DECODE_SCRATCH];
 
-void btphonosink_on_media_payload(const uint8_t *payload, size_t payload_len)
+void speaka_on_media_payload(const uint8_t *payload, size_t payload_len)
 {
     if (!g_running || !payload || payload_len < 4) return;
 
@@ -95,7 +95,7 @@ void btphonosink_on_media_payload(const uint8_t *payload, size_t payload_len)
  * COMPLETE A2DP RTP packet; do not strip a fixed 12-byte header, since CSRCs,
  * RTP extension data and padding can change its length. No daemon hook invokes this
  * until live Sink negotiation and audio-output IPC are implemented. */
-int btphonosink_on_rtp_packet(const uint8_t *packet, size_t packet_len)
+int speaka_on_rtp_packet(const uint8_t *packet, size_t packet_len)
 {
     if (!g_running) return BTPS_MEDIA_INVALID;
     size_t count = 0;
@@ -163,11 +163,11 @@ static void engine_start_internal(void)
     LOG_SINK("AVAudioEngine started: %u Hz, %u ch", g_sample_rate, g_nchannels);
 }
 
-void btphonosink_start(uint32_t sample_rate, uint8_t nchannels)
+void speaka_start(uint32_t sample_rate, uint8_t nchannels)
 {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        g_setup_queue = dispatch_queue_create("com.parv.btphonosink.setup",
+        g_setup_queue = dispatch_queue_create("com.parv.speaka.setup",
                                               DISPATCH_QUEUE_SERIAL);
     });
 
@@ -181,7 +181,7 @@ void btphonosink_start(uint32_t sample_rate, uint8_t nchannels)
     });
 }
 
-void btphonosink_stop(void)
+void speaka_stop(void)
 {
     g_running = 0;
     if (g_engine) {
@@ -193,7 +193,7 @@ void btphonosink_stop(void)
     LOG_SINK("Audio engine stopped");
 }
 
-int btphonosink_is_running(void)
+int speaka_is_running(void)
 {
     return g_running;
 }

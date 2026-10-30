@@ -42,7 +42,7 @@ Start (a real bluetoothd restart) brings it back.
 ## Device test
 
 1. Install the new nightly `.deb`. Bluetooth restarts once during installation; devices reconnect.
-2. **Settings > BTPhonoSink > View debug log:** the status block must show
+2. **Settings > Speaka > View debug log:** the status block must show
    `diag.v89.build: v8.9.2-one-tap-output-select`. If it does not, the daemon is still old: run
    `sudo killall -9 bluetoothd` once or use Reboot Userspace in Dopamine.
 3. Set **Play audio on** to **iPhone speaker** for this first test.
@@ -75,8 +75,8 @@ README.md
 TESTING-v8.9.1.md            (correction note added)
 TESTING-v8.9.2.md            (new)
 Tweak.xm
-btphonosinkprefs/BTPSRootListController.m
-btphonosinkprefs/Resources/Root.plist
+speakaprefs/BTPSRootListController.m
+speakaprefs/Resources/Root.plist
 layout/DEBIAN/postinst
 tests/test_v89_session_output.py
 ```

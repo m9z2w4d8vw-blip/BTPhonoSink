@@ -30,7 +30,7 @@ def text(value):
 def attr(aid, value):
     return u16(aid) + value
 
-def a2dp_sink_record(name="BTPhonoSink", feature_bits=0x0002):
+def a2dp_sink_record(name="Speaka", feature_bits=0x0002):
     # UUID: Sink=0x110B; A2DP profile=0x110D; L2CAP=0x0100;
     # AVDTP protocol=0x0019 / PSM=0x0019.
     return seq(
@@ -85,7 +85,7 @@ def decode_attributes(raw):
 
 def main():
     ap=argparse.ArgumentParser()
-    ap.add_argument("--name",default="BTPhonoSink")
+    ap.add_argument("--name",default="Speaka")
     ap.add_argument("--output",help="write encoded binary to this local path")
     args=ap.parse_args()
     blob=a2dp_sink_record(args.name)

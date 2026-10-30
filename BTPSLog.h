@@ -3,7 +3,7 @@
  *
  * Everything goes to the system log (os_log) and to a bounded in-memory ring. From there it is copied to every
  * channel in BTPSShared.h, and a startup self-test records which channels the daemon's sandbox actually allows.
- * The Settings pane (BTPhonoSinkPrefs) reads the same channels back.
+ * The Settings pane (SpeakaPrefs) reads the same channels back.
  */
 #pragma once
 #include <stddef.h>

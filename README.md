@@ -19,10 +19,10 @@ iOS audio output.
 It is an experimental tweak that modifies a system daemon through private internals, and it supports exactly one `bluetoothd` build
 (see [Requirements](#requirements)).
 
-**About the name.** Everything you see is called Speaka: the package in Sileo, the page in Settings, the app and the
-release files. Underneath, the package ID stays `com.parv.btphonosink`, and so do the internal file and setting names.
-That way each new version installs over the one you have and keeps your settings. Renaming those would make the
-package manager treat it as a different tweak, so an upgrade could leave two copies hooking Bluetooth.
+**About the name.** Everything is called Speaka: the package (`com.parv.speaka`), the tweak inside Bluetooth
+(`Speaka.dylib`), the Settings page, the app and the release files. Version 9.0 completed the rename. If you have a
+build from before it, remove that package once before installing this one; [TESTING-v9.0](docs/history/TESTING-v9.0.md)
+has the steps.
 
 ## Contents
 
@@ -77,11 +77,14 @@ The install script does three things:
 Your Bluetooth devices reconnect within a few seconds, and Settings gains a **Speaka** page. Installing alone does not turn the
 speaker on; tap **Start** for that.
 
+Upgrading from a build older than v9.0? Remove the old package first; see
+[TESTING-v9.0](docs/history/TESTING-v9.0.md).
+
 To remove it, uninstall the package, which also unloads the helper, and then restart Bluetooth to unload the tweak from the running
 daemon:
 
 ```sh
-sudo dpkg -r com.parv.btphonosink
+sudo dpkg -r com.parv.speaka
 sudo killall -9 bluetoothd
 ```
 
@@ -187,13 +190,13 @@ When reporting a problem, use **Save Log to iCloud Drive** on the debug log page
 
 | File | Written by | Notes |
 | --- | --- | --- |
-| `/tmp/FTABHarvest/BTPhonoSink.log` | The tweak inside `bluetoothd` | Cleared when it passes 512 KB. The last 480 lines are also mirrored into preferences, which is what Settings shows. Packet traffic is summarized every 2 s, so this covers several minutes. |
+| `/tmp/FTABHarvest/Speaka.log` | The tweak inside `bluetoothd` | Cleared when it passes 512 KB. The last 480 lines are also mirrored into preferences, which is what Settings shows. Packet traffic is summarized every 2 s, so this covers several minutes. |
 | `/tmp/FTABHarvest/BTPSAudioHelper-v88.log` | `BTPSAudioHelper` (launchd stdout and stderr) | Timestamped like the daemon log. launchd appends to it indefinitely; Settings reads only its tail. |
 
 To copy both to a Windows PC:
 
 ```powershell
-scp mobile@<iphone-ip>:/tmp/FTABHarvest/BTPhonoSink.log "$env:USERPROFILE\Downloads\"
+scp mobile@<iphone-ip>:/tmp/FTABHarvest/Speaka.log "$env:USERPROFILE\Downloads\"
 scp mobile@<iphone-ip>:/tmp/FTABHarvest/BTPSAudioHelper-v88.log "$env:USERPROFILE\Downloads\"
 ```
 
@@ -201,7 +204,7 @@ Lines worth knowing:
 
 | Line | Meaning |
 | --- | --- |
-| `diag.v89.build: v8.9.4-one-tap-output-select` | The tweak build running inside `bluetoothd` |
+| `diag.v89.build: v9.0.0-one-tap-output-select` | The tweak build running inside `bluetoothd` |
 | `diag.v89.session: start nonce=... result=ARMED` | Start restarted Bluetooth and armed the session |
 | `diag.v82.sep: LOCAL register=0 SEID=7 role=SNK ...` | The speaker endpoint is registered |
 | `V88_CONFIG handle=1 local_seid=7 remote_seid=...` | The PC configured a stream |
@@ -245,7 +248,7 @@ Offline helpers in `tools/`:
 
 ### Inside bluetoothd
 
-`Tweak.xm` is loaded into `bluetoothd` (filter: `BTPhonoSink.plist`). Its five offset hooks come from `BTPSBuild.h`, which is
+`Tweak.xm` is loaded into `bluetoothd` (filter: `Speaka.plist`). Its five offset hooks come from `BTPSBuild.h`, which is
 generated from the analysed binary. Every target is verified by LC_UUID and instruction signature before hooking. Two targets do the
 work, and the other three are pass-through observers for diagnostics:
 
@@ -273,7 +276,7 @@ The rest of the design, in order:
 5. **The idle guard (v8.8.2).** iOS's idle check at `+0x376034` would suspend a stream that iOS itself is not playing, and from
    iOS's point of view nothing plays: the audio goes to the helper. While the helper is healthy (fresh media, heartbeat and
    rendering), the guard keeps the stream; otherwise Apple's decision stands (`BTPSV882Health.h`).
-6. **Start and Stop (v8.9.2).** Settings writes `{action, nonce, time}` and posts `com.parv.btphonosink.v89.session`. The tweak
+6. **Start and Stop (v8.9.2).** Settings writes `{action, nonce, time}` and posts `com.parv.speaka.v89.session`. The tweak
    validates the request, sets the one-shot switches, reads them back, and restarts `bluetoothd` by killing itself (`BTPSV89Session.c`).
    It runs as `mobile`, so it cannot use `launchctl kickstart`. launchd relaunches it, and the new daemon reports `ARMED`.
 7. **Bluetooth toggles (v8.9.2).** Turning Bluetooth off and on re-runs Apple's endpoint registration inside the same daemon, without
@@ -281,7 +284,7 @@ The rest of the design, in order:
 
 ### The audio helper
 
-`BTPSAudioHelper` (`btpsaudiohelper/`) runs outside `bluetoothd`. launchd job `com.parv.btphonosink.audio` listens on
+`BTPSAudioHelper` (`btpsaudiohelper/`) runs outside `bluetoothd`. launchd job `com.parv.speaka.audio` listens on
 `127.0.0.1:37594` as user `mobile` and starts the helper on the daemon's first connection after a stream START.
 
 The helper maps the shared ring and decodes SBC with Google libsbc, pinned and fetched at build time (`BTPSV88Decode.c`). It plays
@@ -303,19 +306,19 @@ The route policy is plain C in `BTPSV89Output.h` and is tested directly. The hel
 
 ### Settings
 
-`btphonosinkprefs/` is a PreferenceLoader bundle (`Resources/Root.plist` plus `BTPSRootListController.m`). It shares the
+`speakaprefs/` is a PreferenceLoader bundle (`Resources/Root.plist` plus `BTPSRootListController.m`). It shares the
 `com.apple.bluetooth` preferences domain with `bluetoothd` and signals it with Darwin notifications.
 `BTPSLogReader.m` assembles the debug log export.
 
 | Name | Kind | Purpose |
 | --- | --- | --- |
-| `BTPhonoSinkV89SessionRequest` / `...SessionPending` | Preference | Start/Stop request; consumed by the tweak, carried across its restart |
-| `com.parv.btphonosink.v89.session` | Darwin notification | "A session request is waiting" |
-| `BTPhonoSinkV81SevenOnce`, `BTPhonoSinkV82DecisiveOnce` | Preference | The one-shot switches that Start sets and the next launch consumes |
-| `BTPhonoSinkV89OutputMode` | Preference | `speaker`, `headphones` (wired) or `any` |
-| `BTPhonoSinkV89NeverOutputs` | Preference | Never-play list, `[{uid, name}]` |
-| `com.parv.btphonosink.v89.output` | Darwin notification | Output settings changed |
-| `BTPhonoSinkV89HelperStatus` | Preference | The helper's state, reason, outputs and volume |
+| `SpeakaV89SessionRequest` / `...SessionPending` | Preference | Start/Stop request; consumed by the tweak, carried across its restart |
+| `com.parv.speaka.v89.session` | Darwin notification | "A session request is waiting" |
+| `SpeakaV81SevenOnce`, `SpeakaV82DecisiveOnce` | Preference | The one-shot switches that Start sets and the next launch consumes |
+| `SpeakaV89OutputMode` | Preference | `speaker`, `headphones` (wired) or `any` |
+| `SpeakaV89NeverOutputs` | Preference | Never-play list, `[{uid, name}]` |
+| `com.parv.speaka.v89.output` | Darwin notification | Output settings changed |
+| `SpeakaV89HelperStatus` | Preference | The helper's state, reason, outputs and volume |
 | `127.0.0.1:37594` | TCP (launchd socket) | Daemon-to-helper connection |
 | `/tmp/FTABHarvest/` | Directory | Shared ring file and both logs |
 
@@ -330,10 +333,10 @@ The route policy is plain C in `BTPSV89Output.h` and is tested directly. The hel
 |   |-- BTPSV7x/V8x*.c/.h         earlier research stages still compiled in (capacity, geometry, SDP, fixtures)
 |   `-- BTPSShared.h              preference keys, notification names and log paths shared by all three parts
 |-- SBCSink.mm, sbc_decode.c    the original in-daemon decoder and player (inactive; see Known limitations)
-|-- Makefile, control, BTPhonoSink.plist   Theos build, package metadata, injection filter (bluetoothd only)
+|-- Makefile, control, Speaka.plist   Theos build, package metadata, injection filter (bluetoothd only)
 |-- btpsaudiohelper/            BTPSAudioHelper: decode and playback (Theos tool)
 |   `-- vendor_sbc/               Google libsbc, fetched at build time (only its README is committed)
-|-- btphonosinkprefs/           the Settings page (Theos bundle) and its Resources/
+|-- speakaprefs/           the Settings page (Theos bundle) and its Resources/
 |-- app/                        the Speaka app (Theos application, packaged as Speaka.tipa/.ipa); see app/README.md
 |-- layout/                     files installed as-is: DEBIAN/postinst and prerm, the launchd job, PreferenceLoader entry
 |-- tests/                      the test suite (Python unittest; many tests compile the real C sources) and fixtures/
@@ -379,7 +382,7 @@ You need macOS with Xcode and [Theos](https://theos.dev):
 ```sh
 export THEOS=~/theos
 bash tools/fetch_google_sbc.sh        # Google libsbc at the pinned commit -> btpsaudiohelper/vendor_sbc/
-make clean package FINALPACKAGE=1     # -> packages/com.parv.btphonosink_*.deb (rootless, arm64 + arm64e;
+make clean package FINALPACKAGE=1     # -> packages/com.parv.speaka_*.deb (rootless, arm64 + arm64e;
                                       #    CI publishes it as Speaka_<version>_iphoneos-arm64.deb)
 make -C app tipa FINALPACKAGE=1       # -> app/packages/Speaka.tipa and Speaka.ipa (the companion app)
 ```
@@ -465,6 +468,7 @@ Each version's notes describe what changed, why, and how it was tested on the de
 | v8.9.2 | Start reaches the tweak; Bluetooth toggles are detected | [TESTING-v8.9.2](docs/history/TESTING-v8.9.2.md) |
 | v8.9.3 | Logs that cover the whole session and show where the audio went | [TESTING-v8.9.3](docs/history/TESTING-v8.9.3.md) |
 | v8.9.4 | Wired earbuds without replugging; switching outputs without reconnecting the PC | [TESTING-v8.9.4](docs/history/TESTING-v8.9.4.md) |
+| v9.0 | Renamed to Speaka throughout: package `com.parv.speaka`, new setting and notification names | [TESTING-v9.0](docs/history/TESTING-v9.0.md) |
 
 Reverse-engineering findings:
 

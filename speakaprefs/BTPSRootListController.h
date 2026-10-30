@@ -1,4 +1,4 @@
-// BTPSRootListController.h - the BTPhonoSink page in Settings > Tweaks.
+// BTPSRootListController.h - the Speaka page in Settings > Tweaks.
 //
 // PSListController lives in the private Preferences framework, which is not linked here (the CI build only has the
 // public Xcode SDK). It is declared by hand instead and resolved at runtime from the Settings process, which has

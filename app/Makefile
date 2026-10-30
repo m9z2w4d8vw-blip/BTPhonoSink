@@ -1,4 +1,4 @@
-# Speaka: the companion app for the BTPhonoSink tweak, packaged for TrollStore (.tipa).
+# Speaka: the companion app for the Speaka tweak, packaged for TrollStore (.tipa).
 #
 #   make -C app tipa FINALPACKAGE=1    ->  app/packages/Speaka.tipa and app/packages/Speaka.ipa (the same file)
 #

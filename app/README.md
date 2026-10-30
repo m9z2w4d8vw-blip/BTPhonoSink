@@ -36,9 +36,9 @@ Exactly like Settings > Speaka, through the `com.apple.bluetooth` preferences an
 
 | Action | What the app does |
 | --- | --- |
-| Start / Stop | Writes `{action, nonce, time}` to `BTPhonoSinkV89SessionRequest`, posts `com.parv.btphonosink.v89.session`, then follows `diag.v89.session` until the tweak answers that nonce |
-| Status | Reads `BTPhonoSinkStatus` and `BTPhonoSinkV89HelperStatus` every 0.5 s, with the same rules as the Settings page |
-| Audio output | Writes `BTPhonoSinkV89OutputMode`, then posts `com.parv.btphonosink.v89.output`; the helper switches mid-song |
+| Start / Stop | Writes `{action, nonce, time}` to `SpeakaV89SessionRequest`, posts `com.parv.speaka.v89.session`, then follows `diag.v89.session` until the tweak answers that nonce |
+| Status | Reads `SpeakaStatus` and `SpeakaV89HelperStatus` every 0.5 s, with the same rules as the Settings page |
+| Audio output | Writes `SpeakaV89OutputMode`, then posts `com.parv.speaka.v89.output`; the helper switches mid-song |
 | PC name | Best effort, from the private BluetoothManager framework; otherwise the banner says "Your PC" |
 
 `tests/test_speaka_app.py` checks that the app keeps agreeing with the Settings page on these points:

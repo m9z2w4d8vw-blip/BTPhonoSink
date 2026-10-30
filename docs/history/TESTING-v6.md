@@ -1,4 +1,4 @@
-# BTPhonoSink v6 — exact device testing procedure
+# Speaka v6 — exact device testing procedure
 
 This is a diagnostic-only build. Windows cannot stream sound to the iPhone with this version.
 
@@ -13,7 +13,7 @@ This is a diagnostic-only build. Windows cannot stream sound to the iPhone with 
 
 1. Keep the legacy Sink experiment switch OFF. Install the new `.deb` with your usual package manager.
 2. Restart `bluetoothd` **once** after installation. You previously found that `ssh -t mobile@10.5.79.217 "sudo killall -9 bluetoothd"` restored normal playback; use the same command if that IP is still assigned to the phone. If necessary, reboot and re-jailbreak with Dopamine instead. Do not repeatedly kill the daemon in a loop.
-3. Wait for Bluetooth services to return. Open Settings > BTPhonoSink > Debug log; the first lines should show:
+3. Wait for Bluetooth services to return. Open Settings > Speaka > Debug log; the first lines should show:
 
    ```text
    build: v6-detailed-observe, ...
@@ -25,7 +25,7 @@ This is a diagnostic-only build. Windows cannot stream sound to the iPhone with 
 5. Inspect the three codecs: expect **SBC `0x00`**, **AAC `0x02`**, **vendor `0xFF`**, not six SBC entries. Each registration should show raw return `0x0`, a duration, and SEID output bytes.
 6. Connect your Bluetooth headphones and play audio FROM iPhone TO headphones. Confirm sound; then disconnect and reconnect once and play again. This validates a non-regression only, not Sink reception.
 7. If you leave the phone idle for at least 60 seconds, a `HEARTBEAT bluetoothd pid=...` line and a `diag.heartbeat` status should appear. This lets us distinguish an idle daemon from stale old log data.
-8. In Settings > BTPhonoSink use **Copy log to clipboard**. Paste it back into the chat, along with whether playback survived reconnecting and the GitHub Actions run URL.
+8. In Settings > Speaka use **Copy log to clipboard**. Paste it back into the chat, along with whether playback survived reconnecting and the GitHub Actions run URL.
 
 ## Optional Windows observation (not a Sink test)
 
@@ -40,4 +40,4 @@ Run `powershell -ExecutionPolicy Bypass -File .\tools\windows_bluetooth_snapshot
 - **Headphones connect but are silent:** collect the log *before* any restart. If restarting `bluetoothd` restores sound again, record that; it may be an existing Bluetooth state issue rather than a new regression.
 - **Continuous restarts or loss of Bluetooth:** remove the tweak using the package manager or disable injection using your jailbreak's management tooling. Restart/re-jailbreak normally to restore a known-good baseline.
 
-`/tmp/FTABHarvest/BTPhonoSink.log` contains additional current and past session lines when sandbox permissions permit writing. It is append-only across daemon restarts and may therefore contain **old v4/v5 observations**. Use the v6 session ID or PID to correlate events and avoid assuming a historical failure happened in the current run.
+`/tmp/FTABHarvest/Speaka.log` contains additional current and past session lines when sandbox permissions permit writing. It is append-only across daemon restarts and may therefore contain **old v4/v5 observations**. Use the v6 session ID or PID to correlate events and avoid assuming a historical failure happened in the current run.

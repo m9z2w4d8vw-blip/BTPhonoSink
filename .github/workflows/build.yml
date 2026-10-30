@@ -132,10 +132,10 @@ jobs:
           echo "::group::contents"; dpkg-deb -c "$deb"; echo "::endgroup::"
 
           rm -rf pkgroot && mkdir pkgroot && dpkg-deb -x "$deb" pkgroot
-          dylib="$(find pkgroot -name 'BTPhonoSink.dylib' | sed -n '1p')"
-          plist="$(find pkgroot -name 'BTPhonoSink.plist' | sed -n '1p')"
-          [ -n "$dylib" ] || { echo "::error::BTPhonoSink.dylib is not in the package"; exit 1; }
-          [ -n "$plist" ] || { echo "::error::BTPhonoSink.plist (the injection filter) is not in the package"; exit 1; }
+          dylib="$(find pkgroot -name 'Speaka.dylib' | sed -n '1p')"
+          plist="$(find pkgroot -name 'Speaka.plist' | sed -n '1p')"
+          [ -n "$dylib" ] || { echo "::error::Speaka.dylib is not in the package"; exit 1; }
+          [ -n "$plist" ] || { echo "::error::Speaka.plist (the injection filter) is not in the package"; exit 1; }
 
           # The test requires the standalone SBC decoding helper in the .deb.
           helper="$(find pkgroot -type f -name 'BTPSAudioHelper' | sed -n '1p')"
@@ -183,7 +183,7 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           # Published as Speaka_<version>_<arch>.deb. dpkg reads the package ID from inside the file, so it still
-          # installs over earlier com.parv.btphonosink packages.
+          # installs over earlier com.parv.speaka packages.
           for deb in packages/*.deb; do
             name="$(basename "$deb")"
             cp "$deb" "dist/Speaka_${name#*_}"
@@ -195,7 +195,7 @@ jobs:
             echo "- Package: \`$(basename dist/*.deb)\`"
             echo "- Version: \`$(dpkg-deb -f dist/*.deb Version)\`"
             echo "- Commit: \`${GITHUB_SHA:0:7}\`"
-            echo "- Slices: \`$(lipo -archs "$(find pkgroot -name BTPhonoSink.dylib | sed -n '1p')")\`"
+            echo "- Slices: \`$(lipo -archs "$(find pkgroot -name Speaka.dylib | sed -n '1p')")\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v7
