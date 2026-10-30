@@ -150,7 +150,7 @@ class SpeakaApp(unittest.TestCase):
             self.assertNotIn("imageNamed:", read(source), source.name)
 
     # ------------------------------------------------------------------ build
-    def test_makefile_builds_every_source_and_packages_a_tipa(self):
+    def test_makefile_builds_every_source_and_packages_tipa_and_ipa(self):
         make = read(APP / "Makefile")
         self.assertIn("APPLICATION_NAME = Speaka", make)
         self.assertIn("include $(THEOS_MAKE_PATH)/application.mk", make)
@@ -164,15 +164,39 @@ class SpeakaApp(unittest.TestCase):
         tipa = make.split("tipa: stage", 1)[1]
         self.assertIn("$(THEOS_STAGING_DIR)/Applications/Speaka.app", make)
         self.assertIn('zip -qry "$(CURDIR)/packages/Speaka.tipa" Payload', tipa)
+        # The .ipa is the same package under its other name, made after the .tipa.
+        self.assertLess(tipa.index('zip -qry "$(CURDIR)/packages/Speaka.tipa"'),
+                        tipa.index('cp "$(CURDIR)/packages/Speaka.tipa" "$(CURDIR)/packages/Speaka.ipa"'))
+        self.assertIn("ipa: tipa", make)
 
     def test_workflow_builds_the_app_without_risking_the_tweak(self):
         workflow = read(ROOT / ".github/workflows/build.yml")
         app_job = workflow.split("\n  app:\n", 1)[1].split("\n  release:\n", 1)[0]
         self.assertIn("make -C app clean tipa FINALPACKAGE=1", app_job)
-        self.assertIn("name: Speaka-tipa", app_job)
+        self.assertIn("name: Speaka-app", app_job)
+        upload = app_job.split("actions/upload-artifact", 1)[1]
+        self.assertIn("app/packages/Speaka.tipa", upload)
+        self.assertIn("app/packages/Speaka.ipa", upload)
+        self.assertIn('cmp "$tipa" app/packages/Speaka.ipa', app_job)       # both names, one package
         self.assertIn("com.apple.private.security.no-sandbox", app_job)
         release = workflow.split("\n  release:\n", 1)[1]
-        self.assertIn("needs: build\n", release)                       # the release never waits for the app
+        self.assertIn("needs: [build, app]\n", release)
+        # The release is gated on the tweak only: an app failure must never hold back the .deb.
+        gate = next(line for line in release.splitlines() if line.startswith("    if:"))
+        self.assertIn("!cancelled()", gate)
+        self.assertIn("needs.build.result == 'success'", gate)
+        self.assertNotIn("needs.app", gate)
+        add_app = release.split("- name: Add the Speaka app\n", 1)[1].split("\n\n", 1)[0]
+        self.assertIn("if: needs.app.result == 'success'", add_app)
+        self.assertIn("name: Speaka-app", add_app)
+        sums = release.split("- name: Checksums for everything published\n", 1)[1].split("\n\n", 1)[0]
+        self.assertIn("files=( *.deb *.tipa *.ipa )", sums)
+        self.assertIn("shopt -s nullglob", sums)                       # no .tipa must not break the checksums
+        self.assertLess(release.index("- name: Checksums for everything published"), release.index("- name: Publish"))
+        # GitHub renders "<file>" as an HTML tag and drops it: the notes must name the real package.
+        self.assertNotIn("<file>", release)
+        self.assertIn("sudo dpkg -i ${deb_name}", release)
+        self.assertIn('if [ -f dist/Speaka.tipa ] && [ -f dist/Speaka.ipa ]; then', release)
 
     def test_objective_c_is_structurally_sound(self):
         include_dirs = [APP / d for d in ("Speaka", "Speaka/Model", "Speaka/UI", "Speaka/UI/Transition")] + [ROOT]

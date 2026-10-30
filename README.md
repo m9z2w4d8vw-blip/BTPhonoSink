@@ -152,8 +152,11 @@ adapted from Dopamine. It does the same as the BTPhonoSink Settings page:
 
 The app and the Settings page always agree, because they read and write the same settings.
 
-To install it, download `Speaka.tipa` from a workflow run's `Speaka-tipa` artifact and open it with TrollStore (which
-supports iOS 17.0). The BTPhonoSink package must be installed too: the app only controls the tweak. Details and the
+To install it, download `Speaka.tipa` or `Speaka.ipa` from the same
+[**nightly** pre-release](https://github.com/m9z2w4d8vw-blip/Speaka/releases) as the `.deb`. They are the same file
+under two names, and each workflow run's `Speaka-app` artifact has both too. Open it with TrollStore, which supports
+iOS 17.0. Sideloading it with AltStore or Sideloadly installs it, but without the permissions it needs to control the
+tweak. The BTPhonoSink package must be installed too: the app only controls the tweak. Details and the
 file map are in [app/README.md](app/README.md).
 
 ## Troubleshooting
@@ -331,7 +334,7 @@ The route policy is plain C in `BTPSV89Output.h` and is tested directly. The hel
 |-- btpsaudiohelper/            BTPSAudioHelper: decode and playback (Theos tool)
 |   `-- vendor_sbc/               Google libsbc, fetched at build time (only its README is committed)
 |-- btphonosinkprefs/           the Settings page (Theos bundle) and its Resources/
-|-- app/                        the Speaka app (Theos application, packaged as Speaka.tipa); see app/README.md
+|-- app/                        the Speaka app (Theos application, packaged as Speaka.tipa/.ipa); see app/README.md
 |-- layout/                     files installed as-is: DEBIAN/postinst and prerm, the launchd job, PreferenceLoader entry
 |-- tests/                      the test suite (Python unittest; many tests compile the real C sources) and fixtures/
 |-- tools/                      offline scripts (see Logs and diagnostics)
@@ -361,8 +364,10 @@ Every push runs `.github/workflows/build.yml` on `macos-15`, with Xcode's iPhone
 4. checks the package's contents;
 5. uploads it as the `BTPhonoSink-deb` artifact, kept for 14 days.
 
-A separate job, **Build the Speaka app**, builds and checks `Speaka.tipa` and uploads it as the `Speaka-tipa`
-artifact. It runs alongside the tweak's job, so an app failure never affects the `.deb` or its release.
+A separate job, **Build the Speaka app**, builds and checks `Speaka.tipa` and `Speaka.ipa` (the same package under
+two names) and uploads them as the `Speaka-app` artifact. The release then carries both next to the `.deb`, with all
+three in `SHA256SUMS`. If the app fails to
+build, the release still goes out with the `.deb`, and its notes say that the app is missing.
 
 Pushes to `main` then republish the rolling **nightly** pre-release. A tag such as `v0.2.0` publishes release `0.2.0`. Package
 versions are `control`'s `Version` plus the run number (`0.1.0.N`), so every build is newer than the last.
@@ -375,7 +380,7 @@ You need macOS with Xcode and [Theos](https://theos.dev):
 export THEOS=~/theos
 bash tools/fetch_google_sbc.sh        # Google libsbc at the pinned commit -> btpsaudiohelper/vendor_sbc/
 make clean package FINALPACKAGE=1     # -> packages/com.parv.btphonosink_*.deb (rootless, arm64 + arm64e)
-make -C app tipa FINALPACKAGE=1       # -> app/packages/Speaka.tipa (the companion app, for TrollStore)
+make -C app tipa FINALPACKAGE=1       # -> app/packages/Speaka.tipa and Speaka.ipa (the companion app)
 ```
 
 The build is rootless only: the install script and the launchd job use `/var/jb` paths. `BTPS_WITH_PREFS=0` skips the Settings

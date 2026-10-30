@@ -1,6 +1,6 @@
 # Speaka: the companion app for the BTPhonoSink tweak, packaged for TrollStore (.tipa).
 #
-#   make -C app tipa FINALPACKAGE=1    ->  app/packages/Speaka.tipa
+#   make -C app tipa FINALPACKAGE=1    ->  app/packages/Speaka.tipa and app/packages/Speaka.ipa (the same file)
 #
 # Independent of the tweak's Makefile at the repository root: it never goes into the tweak's .deb.
 
@@ -31,8 +31,12 @@ tipa: stage
 	@test -x "$(SPEAKA_STAGED_APP)/Speaka" || { echo "Speaka.app was not staged at $(SPEAKA_STAGED_APP)"; exit 1; }
 	@rm -rf "$(SPEAKA_PAYLOAD)" && mkdir -p "$(SPEAKA_PAYLOAD)/Payload" "$(CURDIR)/packages"
 	@cp -R "$(SPEAKA_STAGED_APP)" "$(SPEAKA_PAYLOAD)/Payload/"
-	@rm -f "$(CURDIR)/packages/Speaka.tipa"
+	@rm -f "$(CURDIR)/packages/Speaka.tipa" "$(CURDIR)/packages/Speaka.ipa"
 	@cd "$(SPEAKA_PAYLOAD)" && zip -qry "$(CURDIR)/packages/Speaka.tipa" Payload
-	@echo "Built $(CURDIR)/packages/Speaka.tipa"
+	@# The same package under its other name, as Dopamine publishes both. TrollStore opens either.
+	@cp "$(CURDIR)/packages/Speaka.tipa" "$(CURDIR)/packages/Speaka.ipa"
+	@echo "Built $(CURDIR)/packages/Speaka.tipa and Speaka.ipa (the same file)"
 
-.PHONY: tipa
+ipa: tipa
+
+.PHONY: tipa ipa

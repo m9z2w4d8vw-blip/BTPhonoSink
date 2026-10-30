@@ -243,6 +243,7 @@ jobs:
           set -euo pipefail
           tipa=app/packages/Speaka.tipa
           test -s "$tipa" || { echo "::error::$tipa was not built"; exit 1; }
+          cmp "$tipa" app/packages/Speaka.ipa || { echo "::error::Speaka.ipa is missing or differs from Speaka.tipa"; exit 1; }
           rm -rf tipacheck && mkdir tipacheck && unzip -q "$tipa" -d tipacheck
           bundle=tipacheck/Payload/Speaka.app
           for f in Speaka Info.plist AppIcon60x60@2x.png AppIcon60x60@3x.png LICENSE-Dopamine.txt; do
@@ -257,8 +258,10 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: Speaka-tipa
-          path: app/packages/Speaka.tipa
+          name: Speaka-app
+          path: |
+            app/packages/Speaka.tipa
+            app/packages/Speaka.ipa
           if-no-files-found: error
           retention-days: 14
 
@@ -267,8 +270,10 @@ jobs:
   # ---------------------------------------------------------------------------------------------
   release:
     name: Publish to GitHub Releases
-    needs: build
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    # Waits for the app too, but publishes whenever the tweak built: Speaka.tipa and .ipa are attached only if it built,
+    # so an app failure never holds back the .deb.
+    needs: [build, app]
+    if: ${{ !cancelled() && needs.build.result == 'success' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -282,6 +287,22 @@ jobs:
           name: BTPhonoSink-deb
           path: dist
 
+      - name: Add the Speaka app
+        if: needs.app.result == 'success'
+        uses: actions/download-artifact@v8
+        with:
+          name: Speaka-app
+          path: dist
+
+      - name: Checksums for everything published
+        run: |
+          set -euo pipefail
+          cd dist
+          shopt -s nullglob
+          files=( *.deb *.tipa *.ipa )
+          sha256sum "${files[@]}" > SHA256SUMS
+          cat SHA256SUMS
+
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
@@ -294,6 +315,12 @@ jobs:
           first_deb=""
           for f in dist/*.deb; do first_deb="$f"; break; done
           pkg="$(dpkg-deb -f "$first_deb" Package)"
+          deb_name="$(basename "$first_deb")"
+          if [ -f dist/Speaka.tipa ] && [ -f dist/Speaka.ipa ]; then
+            app_note="- Speaka.tipa and Speaka.ipa: the Speaka app, the same file under both names. Open either with TrollStore and install the .deb too; sideloading it with AltStore or Sideloadly removes the permissions it needs to control the tweak."
+          else
+            app_note="- The Speaka app did not build in this run, so there is no Speaka.tipa or Speaka.ipa here; see the run's log."
+          fi
 
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             # ---- versioned release: v0.2.0 ----
@@ -314,11 +341,15 @@ jobs:
 
           - Package version: ${VERSION}
           - Rootless (iphoneos-arm64), arm64 + arm64e
-          - Verify your download against SHA256SUMS
+          ${app_note}
+          - Verify your downloads against SHA256SUMS
 
-          Install on the device:
-              sudo dpkg -i <file>.deb && sudo killall -9 bluetoothd
-          Remove:
+          Install the tweak on the device:
+
+              sudo dpkg -i ${deb_name} && sudo killall -9 bluetoothd
+
+          Remove it:
+
               sudo dpkg -r ${pkg}
 
           Experimental build; not tested on a device by CI.

@@ -6,7 +6,8 @@ The companion app for the BTPhonoSink tweak. It offers:
 - an **Audio output** menu that unfolds into the three outputs;
 - a connection banner that scrolls to the right and shows who is connected.
 
-It is a TrollStore app (`Speaka.tipa`), built separately from the tweak's `.deb`.
+It is a TrollStore app, published as `Speaka.tipa` and `Speaka.ipa` (the same file), and built separately from
+the tweak's `.deb`.
 
 The user interface is adapted from [Dopamine](https://github.com/opa334/Dopamine) by Lars Fröder (opa334) and its
 contributors, under the MIT License. The license ships in the app (`Resources/LICENSE-Dopamine.txt`, shown under
@@ -16,14 +17,16 @@ own; no Dopamine image is used.
 ## Build and install
 
 ```sh
-make -C app tipa FINALPACKAGE=1      # -> app/packages/Speaka.tipa
+make -C app tipa FINALPACKAGE=1      # -> app/packages/Speaka.tipa and Speaka.ipa (the same file)
 ```
 
-CI builds it in its own job, **Build the Speaka app**, and uploads it as the `Speaka-tipa` artifact. A failure there
-never affects the tweak's `.deb` or its release.
+CI builds it in its own job, **Build the Speaka app**, and uploads both files as the `Speaka-app` artifact. The
+release attaches them next to the tweak's `.deb`. If the app fails to build, the release goes out without it rather than not at
+all.
 
-To install, open `Speaka.tipa` with TrollStore. The BTPhonoSink package must be installed as well: the app only
-controls the tweak.
+To install, open `Speaka.tipa` or `Speaka.ipa` with TrollStore. The BTPhonoSink package must be installed as well:
+the app only controls the tweak. Sideloading it with AltStore or Sideloadly would strip its two entitlements, and
+without them it cannot reach the tweak.
 
 ## How it talks to the tweak
 
