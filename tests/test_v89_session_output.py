@@ -95,60 +95,43 @@ int main(void) {
 
     def test_daemon_consumes_validates_and_verifies_before_restarting(self):
         code = read("BTPSV89Session.c")
-        # The one and only child process is launchctl. No shell, no fork/exec of anything else, no hooking.
-        for forbidden in ("system(", "popen(", "execv", "execl", "fork(", "MSHookFunction"):
-            self.assertNotIn(forbidden, code)
-        self.assertEqual(code.count("posix_spawn("), 1)
-        # v8.9.0's self-kill is the bug that stranded Bluetooth; it must be gone from the CODE. The header comment
-        # still mentions it to explain the fix, so strip the leading block comment before checking.
-        code_no_header = code.split("*/", 1)[1]
-        self.assertNotIn("kill(getpid()", code_no_header)
-        self.assertNotIn("SIGKILL", code_no_header)
-        self.assertNotIn("_exit(", code_no_header)
-        self.assertIn("notify_register_dispatch(BTPS_NOTIFY_V89_SESSION", code)
-        self.assertIn("DISPATCH_QUEUE_SERIAL", code)
-        take = code.split("static int v89_take_record(", 1)[1].split("static int v89_read_bool(", 1)[0]
+        body = code.split("*/", 1)[1]          # the header comment may mention what NOT to do
+        for forbidden in ("system(", "popen(", "posix_spawn", "execv", "execl", "fork(", "launchctl", "MSHookFunction"):
+            self.assertNotIn(forbidden, body)
+        self.assertIn("notify_register_dispatch(BTPS_NOTIFY_V89_SESSION", body)
+        self.assertIn("DISPATCH_QUEUE_SERIAL", body)
+        take = body.split("static int v89_take_record(", 1)[1].split("static int v89_read_bool(", 1)[0]
         self.assertLess(take.index("CFPreferencesSetAppValue(key, NULL, V89_DOMAIN)"), take.index("return ok ? 1 : -2"))
         self.assertIn("return -1;", take)
-        handle = code.split("static void v89_handle_request(void)", 1)[1].split("void BTPSV89SessionStart(void)", 1)[0]
+        handle = body.split("static void v89_handle_request(void)", 1)[1].split("void BTPSV89SessionStart(void)", 1)[0]
         consume = handle.index("v89_take_record(CFSTR(BTPS_KEY_V89_REQUEST)")
         refuse = handle.index("if (why) {")
         write = handle.index("if (!v89_write_switches(")
-        restart = handle.index("v89_restart_bluetoothd()")
+        kill = handle.index("kill(getpid(), SIGKILL)")
         self.assertLess(consume, refuse)
         self.assertLess(refuse, write)
-        self.assertLess(write, restart)
+        self.assertLess(write, kill)
         self.assertIn("btps_v89_request_fresh(when, v89_now())", handle)
         self.assertIn("btps_v89_nonce_valid(nonce)", handle)
-        switches = code.split("static int v89_write_switches(", 1)[1].split("static int v89_spawn_kickstart(", 1)[0]
+        switches = body.split("static int v89_write_switches(", 1)[1].split("static void v89_handle_request(", 1)[0]
         for key in ("BTPS_KEY_V81_SEVEN_ONCE", "BTPS_KEY_V82_DECISIVE_ONCE", "BTPS_KEY_EXPERIMENTS", "BTPS_KEY_V89_PENDING"):
             self.assertIn("CFSTR(%s)" % key, switches)
         self.assertIn("v89_read_bool(CFSTR(BTPS_KEY_V81_SEVEN_ONCE), &seven) || seven != start", switches)
         self.assertIn("v89_read_bool(CFSTR(BTPS_KEY_V82_DECISIVE_ONCE), &decisive) || decisive != start", switches)
-        report = code.split("void BTPSV89SessionReport(", 1)[1]
+        report = body.split("void BTPSV89SessionReport(", 1)[1]
         self.assertIn("v89_take_record(CFSTR(BTPS_KEY_V89_PENDING)", report)
         self.assertIn("nonce=%s pid=%d result=%s", report)
 
-    def test_restart_uses_launchctl_kickstart_and_fails_safe(self):
-        code = read("BTPSV89Session.c")
-        spawn = code.split("static int v89_spawn_kickstart(", 1)[1].split("static void v89_restart_bluetoothd(", 1)[0]
-        # kickstart -k atomically kills AND relaunches, so Bluetooth can't be left down.
-        self.assertIn('"kickstart"', spawn)
-        self.assertIn('"-k"', spawn)
-        self.assertIn("posix_spawn(&pid, launchctl", spawn)
-        self.assertIn("waitpid(pid", spawn)
-        restart = code.split("static void v89_restart_bluetoothd(", 1)[1].split("static void v89_handle_request(", 1)[0]
-        self.assertIn("BTPS_V89_BLUETOOTHD_TARGET", restart)
-        # On total failure it must report and RETURN, never kill Bluetooth or this process.
-        self.assertIn("auto-restart unavailable", restart)
-        self.assertNotIn("kill(", restart)
-        self.assertIn('#define BTPS_V89_BLUETOOTHD_TARGET "system/com.apple.bluetoothd"', code)
-        # Real base-system launchctl path is tried (rootless relocates most, but launchctl stays at /bin).
-        self.assertIn('"/bin/launchctl"', code)
-        self.assertIn('"/var/jb/bin/launchctl"', code)
-        # The handler clears its re-entry guard instead of exiting, so a failed restart leaves the daemon healthy.
-        handle = code.split("static void v89_handle_request(void)", 1)[1].split("void BTPSV89SessionStart(void)", 1)[0]
-        self.assertIn("g_v89_restarting = 0;", handle)
+    def test_restart_is_self_sigkill_like_killall(self):
+        # bluetoothd runs as mobile, so system-domain launchctl is unavailable to it; signalling itself needs no
+        # privilege and launchd relaunches it exactly as after `killall -9 bluetoothd`.
+        self.assertIn("The daemon runs as user `mobile`", read("BTPSShared.h"))
+        body = read("BTPSV89Session.c").split("*/", 1)[1]
+        self.assertEqual(body.count("kill(getpid(), SIGKILL)"), 1)
+        self.assertIn("#include <signal.h>", body)
+        handle = body.split("static void v89_handle_request(void)", 1)[1].split("void BTPSV89SessionStart(void)", 1)[0]
+        self.assertLess(handle.index("g_v89_restarting = 1;"), handle.index("kill(getpid(), SIGKILL)"))
+        self.assertLess(handle.index("BTPSLogNow("), handle.index("kill(getpid(), SIGKILL)"))  # breadcrumb hits disk first
 
     def test_daemon_wiring_and_key_literals(self):
         tweak = read("Tweak.xm")
@@ -352,18 +335,77 @@ int main(void) {
         self.assertIn("AVKit", read("btphonosinkprefs/Makefile"))
         self.assertIn("- (void)reloadSpecifierID:(NSString *)specifierID;", read("btphonosinkprefs/BTPSRootListController.h"))
 
-    def test_settings_poll_handles_blocked_restart_without_advising_reinstall(self):
-        poll = read("btphonosinkprefs/BTPSRootListController.m").split("- (void)pollSession", 1)[1] \
-            .split("- (void)finishSession:", 1)[0]
-        # When the tweak reports the sandbox blocked the restart, Settings guides a manual toggle, not a reinstall.
-        self.assertIn("auto-restart unavailable", poll)
-        self.assertIn("Turn Bluetooth off and on", poll)
-        blocked = poll.index("auto-restart unavailable")
-        reinstall = poll.index("reinstall the package")
-        self.assertLess(blocked, reinstall)
-        # The "reinstall" wording is now guarded by an actual not-loaded check, not shown on every timeout.
-        self.assertIn("loadedSummary", poll)
-        self.assertIn("Nothing was broken.", poll)
+    def test_settings_gates_start_on_daemon_version_and_never_advises_toggling(self):
+        controller = read("btphonosinkprefs/BTPSRootListController.m")
+        # Start/Stop is only offered to a bluetoothd that actually contains the listener.
+        confirm = controller.split("- (void)confirmSession:(NSString *)action", 1)[1].split("- (void)sendSession:", 1)[0]
+        self.assertLess(confirm.index("daemonHasSessionListener"), confirm.index("presentViewController:alert"))
+        gate = controller.split("- (BOOL)daemonHasSessionListener", 1)[1].split("- (void)confirmSession:", 1)[0]
+        self.assertIn('@"diag.v89.build"', gate)
+        self.assertIn('status[@"diag.v89.build"]', controller.split("static NSString *BTPSSessionSummary", 1)[1])
+        summary = controller.split("static NSString *BTPSSessionSummary", 1)[1].split("\n}\n", 1)[0]
+        self.assertLess(summary.index('hasPrefix:@"LOST"'), summary.index('hasPrefix:@"ARMED"'))
+        # Turning Bluetooth off and on does not restart bluetoothd and drops a live Sink: never recommend it.
+        for advice in ("turn Bluetooth off and on", "Turn Bluetooth off and on", "toggle Bluetooth", "Airplane Mode off/on",
+                       "auto-restart unavailable"):
+            self.assertNotIn(advice, controller)
+        footer = [i for i in plistlib.loads((ROOT / "btphonosinkprefs/Resources/Root.plist").read_bytes())["items"]
+                  if i.get("label") == "Bluetooth speaker"][0]["footerText"]
+        self.assertIn("tap Start", footer)
+        self.assertIn("off and on", footer)
+
+    def test_sink_loss_after_bluetooth_toggle_is_reported(self):
+        tweak = read("Tweak.xm")
+        hook = tweak.split("static uint64_t btps_v83_hook_native_registration(", 1)[1] \
+            .split("static void btps_v83_install_native_registration(", 1)[0]
+        self.compile_run(r'''
+#include <assert.h>
+#include <pthread.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+typedef uint64_t (*btps_v83_source_reg_fn_t)(uint64_t);
+static btps_v83_source_reg_fn_t g_v83_source_reg_orig;
+static int g_v82_armed = 1;
+static volatile unsigned g_native_source_success = 6, g_v83_audio_extended = 0, g_v82_sink_accepted = 0;
+static volatile unsigned g_v892_native_loops = 0;
+static pthread_mutex_t g_v88_control_lock = PTHREAD_MUTEX_INITIALIZER;
+static int post_source_calls = 0, set_active_calls = 0, last_active = -9;
+static char last_sep[200];
+static void BTPSLogNow(const char *, ...) {}
+static void BTPSSetStatus(const char *key, const char *fmt, ...) {
+    if (!strcmp(key, "diag.v82.sep")) snprintf(last_sep, sizeof last_sep, "%s", fmt);
+}
+static void BTPSV88SetActive(int active) { set_active_calls++; last_active = active; }
+static void btps_v83_attempt_post_source(uint64_t) {   /* first power-up installs the Sink, later ones cannot */
+    post_source_calls++;
+    if (post_source_calls == 1) { g_v83_audio_extended = 1; g_v82_sink_accepted = 1; }
+}
+static uint64_t native_loop(uint64_t) { return 0; }
+static uint64_t btps_v83_hook_native_registration(''' + hook + r'''
+int main() {
+    g_v83_source_reg_orig = native_loop;
+    btps_v83_hook_native_registration(0x1000);                 /* bluetoothd starts: Sink installed */
+    assert(post_source_calls == 1 && g_v82_sink_accepted == 1 && set_active_calls == 0 && !last_sep[0]);
+    btps_v83_hook_native_registration(0x2000);                 /* Bluetooth off/on inside the same process */
+    assert(g_v82_sink_accepted == 0 && set_active_calls == 1 && last_active == 0);
+    assert(strncmp(last_sep, "LOST", 4) == 0 && strstr(last_sep, "tap Start"));
+    /* Not armed: nothing is reported or changed. */
+    g_v82_armed = 0; last_sep[0] = 0; set_active_calls = 0;
+    btps_v83_hook_native_registration(0x3000);
+    assert(set_active_calls == 0 && !last_sep[0]);
+    return 0;
+}
+''', cpp=True)
+
+    def test_postinst_restarts_bluetoothd_to_load_the_new_tweak(self):
+        post = read("layout/DEBIAN/postinst")
+        restart = [line for line in post.splitlines() if "killall -9 bluetoothd" in line]
+        self.assertEqual(len(restart), 1)
+        self.assertTrue(restart[0].rstrip().endswith("|| true"), restart[0])   # can never fail the install
+        self.assertLess(post.index("launchctl bootstrap system"), post.index("killall -9 bluetoothd"))
+        self.assertLess(post.index("killall -9 bluetoothd"), post.index("\nfi\nexit 0"))  # inside the configure branch
+        subprocess.run(["sh", "-n", str(ROOT / "layout/DEBIAN/postinst")], check=True)
 
 
 if __name__ == "__main__":

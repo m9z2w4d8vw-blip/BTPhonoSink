@@ -84,7 +84,7 @@
 #define BTPS_BUILD_TAG "v8.8-continuous-sbc-ring"
 /* v8.9 keeps the v8.8 build label, as v8.8.1 and v8.8.2 did; this separate tag identifies the one-tap
  * Start/Stop build in the status block (diag.v89.build) and the log. */
-#define BTPS_V89_BUILD_TAG "v8.9.1-one-tap-output-select"
+#define BTPS_V89_BUILD_TAG "v8.9.2-one-tap-output-select"
 
 /* AVDTP constants, used for native Source registration diagnostics */
 #define BTPS_AVDTP_TSEP_SRC 0u
@@ -1173,12 +1173,29 @@ reject_before_swap:
 /* Function identity and exact four-word signature established from uploaded
  * bluetoothd: +0x3B4128. It takes audio context as x0, returns w0 status.
  * This observer calls the original once, and only then runs the experiment. */
+/* v8.9.2: Apple's registration loop runs on every Bluetooth power-up, not just at process start. Turning Bluetooth
+ * (or Airplane Mode) off and on re-runs it INSIDE the same bluetoothd: Apple rebuilds its SDP records and six
+ * Source endpoints from scratch, but the one-shot Sink (SEID 7 + record 0x110B) is not re-added, and the rebuilt
+ * endpoint table is back to six slots. The PC then connects, finds no speaker endpoint and drops, over and over.
+ * Re-adding the Sink here would mean repeating the private-memory steps on new objects untested, so instead the
+ * loss is reported plainly and forwarding state is cleared; Start (a real bluetoothd restart) brings it back. */
+static volatile unsigned g_v892_native_loops = 0;
 static uint64_t btps_v83_hook_native_registration(uint64_t audio_context)
 {
     uint64_t ret = g_v83_source_reg_orig ? g_v83_source_reg_orig(audio_context) : 1u;
+    unsigned loops = __sync_add_and_fetch(&g_v892_native_loops, 1u);
     if (g_v82_armed) {
         BTPSLogNow("V83 NATIVE_SOURCE_LOOP RETURN ret=%#llx observed_sources=%u; post-return boundary",
                    (unsigned long long)ret, (unsigned)g_native_source_success);
+        if (loops > 1u && g_v83_audio_extended) {
+            pthread_mutex_lock(&g_v88_control_lock);   /* same lock SetConfigInd and signaling use */
+            g_v82_sink_accepted = 0u;
+            BTPSV88SetActive(0);
+            pthread_mutex_unlock(&g_v88_control_lock);
+            BTPSSetStatus("diag.v82.sep", "LOST: Bluetooth was turned off and on; speaker endpoint gone until bluetoothd restarts (tap Start)");
+            BTPSLogNow("V892 SINK_LOST native Source loop ran again (#%u): Bluetooth re-initialized inside this bluetoothd; "
+                       "Sink SEID 7 and SDP 0x110B are not re-added. Tap Start to restart bluetoothd.", loops);
+        }
         if (ret == 0) btps_v83_attempt_post_source(audio_context);
         else BTPSSetStatus("diag.v83.audio_table", "REFUSED: native Source loop returned error %#llx", (unsigned long long)ret);
     }

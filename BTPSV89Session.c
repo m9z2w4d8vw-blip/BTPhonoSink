@@ -1,17 +1,17 @@
-/* BTPSV89Session.c - v8.9.1 one-tap Start/Stop, handled inside bluetoothd.
+/* BTPSV89Session.c - v8.9.2 one-tap Start/Stop, handled inside bluetoothd.
  *
  * The notification handler runs on its own serial dispatch queue, never on a Bluetooth hook or receive thread.
  * A request is consumed (deleted) before it is acted on, so it is honoured at most once. Switches are written
  * and read back before the restart; if anything cannot be verified, Bluetooth is NOT restarted.
  *
- * Restart: v8.9.0 did kill(getpid(),SIGKILL) from inside bluetoothd. On the device launchd did not always
- * relaunch bluetoothd after that, so Bluetooth could stay down (a daemon killing ITSELF is not the same as an
- * external killall, which is what actually relaunches it). v8.9.1 instead posix_spawns
- *   launchctl kickstart -k system/com.apple.bluetoothd
- * which atomically kills AND relaunches the service in one launchd operation, so bluetoothd can never be left
- * down. The spawn happens while bluetoothd is still alive and running as root, so launchctl inherits the
- * privilege it needs; bluetoothd then exits when launchctl terminates it, already committed to the restart.
- * Nothing is done as the mobile-owned helper, which lacks the privilege to restart a root service.
+ * The restart is SIGKILL to this very process. launchd only sees "bluetoothd exited on signal 9", exactly as
+ * after `killall -9 bluetoothd`, which reliably relaunches it on the tested phone. bluetoothd runs as mobile
+ * (which is why Settings can read the preferences it writes), so system-domain `launchctl kickstart` is not
+ * available to it; v8.9.1 tried that and is reverted. Killing yourself needs no privilege and no sandbox rule.
+ *
+ * History: v8.9.0's "Still waiting" reports were NOT this restart failing. The running bluetoothd still had the
+ * pre-v8.9 tweak loaded (installing a package does not restart daemons), so nothing was listening. The package
+ * postinst now restarts bluetoothd so a freshly installed tweak is always the one running.
  */
 #include "BTPSV89Session.h"
 #include "BTPSLog.h"
@@ -19,31 +19,12 @@
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <dispatch/dispatch.h>
-#include <errno.h>
 #include <notify.h>
-#include <spawn.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <sys/stat.h>
-#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
-
-extern char **environ;
-
-/* Launchd service target for bluetoothd. On a rootless jailbreak bluetoothd is still an Apple system daemon,
- * so it lives in the system domain under its real Apple label (NOT the /var/jb prefix, which is only for the
- * tweak's own jailbroken services). */
-#define BTPS_V89_BLUETOOTHD_TARGET "system/com.apple.bluetoothd"
-
-/* launchctl is part of the base system. Rootless relocates most binaries under /var/jb, but launchctl is one of
- * the few that must exist at the real /bin for launchd itself; try the rootless path first anyway, then /bin. */
-static const char *const kV89LaunchctlPaths[] = {
-    "/var/jb/bin/launchctl",
-    "/var/jb/usr/bin/launchctl",
-    "/bin/launchctl",
-    "/usr/bin/launchctl",
-};
 
 #define V89_DOMAIN CFSTR(BTPS_PREFS_DOMAIN)
 
@@ -133,39 +114,6 @@ static int v89_write_switches(int start, const char *nonce, double when)
     return 1;
 }
 
-/* Spawn `launchctl kickstart -k <target>`. Returns 0 if launchctl was spawned and exited 0 (launchd has
- * committed to killing and relaunching the service), nonzero otherwise. This runs inside bluetoothd (root), so
- * the child inherits the privilege; bluetoothd itself is torn down by launchd as part of the kickstart.
- * Never kills this process directly: a failed spawn must leave Bluetooth running. */
-static int v89_spawn_kickstart(const char *launchctl, const char *target)
-{
-    char *const argv[] = { (char *)launchctl, (char *)"kickstart", (char *)"-k", (char *)target, NULL };
-    pid_t pid = 0;
-    int rc = posix_spawn(&pid, launchctl, NULL, NULL, argv, environ);
-    if (rc != 0) return rc;                 /* launchctl not spawnable at this path */
-    int status = 0;
-    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) { }
-    /* If launchd tears us down before waitpid returns, we simply never get here - that is fine, the restart is
-     * already in flight. A returned status of 0 means kickstart was accepted. */
-    return (WIFEXITED(status) && WEXITSTATUS(status) == 0) ? 0 : -1;
-}
-
-static void v89_restart_bluetoothd(void)
-{
-    for (size_t i = 0; i < sizeof kV89LaunchctlPaths / sizeof kV89LaunchctlPaths[0]; i++) {
-        struct stat st;
-        if (stat(kV89LaunchctlPaths[i], &st) != 0) continue;     /* path not present on this install */
-        BTPSLogNow("V89_SESSION kickstart via %s %s", kV89LaunchctlPaths[i], BTPS_V89_BLUETOOTHD_TARGET);
-        if (v89_spawn_kickstart(kV89LaunchctlPaths[i], BTPS_V89_BLUETOOTHD_TARGET) == 0) return;
-        BTPSLogNow("V89_SESSION kickstart via %s did not report success; trying the next path", kV89LaunchctlPaths[i]);
-    }
-    /* No launchctl worked. Bluetooth is still up and the switches are armed: the user can restart Bluetooth
-     * themselves (toggle Bluetooth, or the SSH command) and the armed trial will run on the next launch. */
-    BTPSSetStatus(BTPS_STATUS_V89_SESSION,
-                  "ARMED but auto-restart unavailable: toggle Bluetooth off/on (or restart bluetoothd) to apply");
-    BTPSLogNow("V89_SESSION could not spawn launchctl; switches remain armed, Bluetooth left running");
-}
-
 static void v89_handle_request(void)
 {
     if (g_v89_restarting) return;
@@ -196,14 +144,10 @@ static void v89_handle_request(void)
         return;
     }
     g_v89_restarting = 1;
-    BTPSLogNow("V89_SESSION %s nonce=%s: one-shot switches %s; restarting bluetoothd via launchctl kickstart -k",
+    BTPSLogNow("V89_SESSION %s nonce=%s: one-shot switches %s; restarting bluetoothd (SIGKILL, same as killall -9)",
                action, nonce, start ? "ARMED" : "cleared");
-    v89_restart_bluetoothd();
-    /* kickstart -k returns BEFORE launchd tears this process down, so we normally reach here. Do NOT fall back to
-     * killing ourselves: that is the v8.9.0 bug that left Bluetooth down. Leave the request consumed (so it is not
-     * retried) and let the pending launchd restart proceed. If the spawn failed, Bluetooth is untouched and the
-     * reported status tells Settings to use the manual switches. */
-    g_v89_restarting = 0;
+    (void)kill(getpid(), SIGKILL);
+    _exit(1); /* only reached if SIGKILL was somehow refused; launchd restarts bluetoothd either way */
 }
 
 void BTPSV89SessionStart(void)

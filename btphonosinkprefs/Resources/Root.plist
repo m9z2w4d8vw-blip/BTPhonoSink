@@ -42,7 +42,7 @@
 			<key>label</key>
 			<string>Bluetooth speaker</string>
 			<key>footerText</key>
-			<string>Start arms the speaker experiment for one Bluetooth session and tries to restart Bluetooth for you, so normally no PowerShell command is needed. On some devices iOS does not let it restart Bluetooth automatically; if so, it tells you to toggle Bluetooth off and on, and the experiment runs on the next start. AirPods and other devices reconnect by themselves. Then connect from your PC and choose this iPhone as its audio output. After a reboot or any Bluetooth restart, tap Start again. Stop clears the experiment on the next Bluetooth start.</string>
+			<string>Start turns on the speaker experiment for one Bluetooth session and restarts the Bluetooth daemon for you, so no PowerShell command is needed. AirPods and other devices reconnect by themselves. Then connect from your PC and choose this iPhone as its audio output. The speaker lasts until Bluetooth restarts: after a reboot, a userspace reboot, or turning Bluetooth or Airplane Mode off and on, tap Start again. Stop restarts Bluetooth normally.</string>
 		</dict>
 		<dict>
 			<key>cell</key>

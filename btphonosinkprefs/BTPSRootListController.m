@@ -41,6 +41,8 @@ static NSString *BTPSSessionSummary(NSDictionary *status)
     NSString *trial = BTPSString(status[@"diag.v82.trial"]);
     NSString *sep = BTPSString(status[@"diag.v82.sep"]);
     NSString *table = BTPSString(status[@"diag.v83.audio_table"]);
+    if ([sep hasPrefix:@"LOST"]) return @"Off - Bluetooth was turned off and on; tap Start";
+    if (status.count && !status[@"diag.v89.build"]) return @"Old version running - see Start";
     if ([trial hasPrefix:@"ARMED"]) {
         for (NSString *bad in @[ @"REFUSED", @"ROLLED BACK", @"UNSAFE", @"FAILED", @"SDP publish failed" ])
             if ([table hasPrefix:bad]) return [@"Failed: " stringByAppendingString:table];
@@ -216,9 +218,25 @@ static UIControl *BTPSFindControl(UIView *view)
 - (void)startSink:(id)specifier { [self confirmSession:@"start"]; }
 - (void)stopSink:(id)specifier  { [self confirmSession:@"stop"]; }
 
+// True when the bluetoothd that is running right now contains the Start/Stop listener (v8.9 or later). Installing a
+// package updates this Settings page immediately, but bluetoothd keeps whatever tweak it launched with.
+- (BOOL)daemonHasSessionListener
+{
+    return BTPSDaemonStatus()[@"diag.v89.build"] != nil;
+}
+
 - (void)confirmSession:(NSString *)action
 {
     if (self.pendingNonce) return;     // one request at a time
+    if (![self daemonHasSessionListener]) {
+        [self alertWithTitle:@"Restart Bluetooth once to finish installing"
+                     message:@"Bluetooth is still running the BTPhonoSink version it started with, which has no Start "
+                             @"button, so nothing would answer. Restart the Bluetooth daemon once: reinstalling this "
+                             @"package does it automatically, or run your usual sudo killall -9 bluetoothd command, or "
+                             @"use Reboot Userspace in Dopamine. After that, Start works without the PC.\n\n"
+                             @"Turning Bluetooth off and on does not restart the daemon."];
+        return;
+    }
     BOOL start = [action isEqualToString:@"start"];
     NSString *title = start ? @"Start the Bluetooth speaker?" : @"Stop the Bluetooth speaker?";
     NSString *message = start
@@ -304,7 +322,8 @@ static UIControl *BTPSFindControl(UIView *view)
         if ([summary isEqualToString:@"On"]) {
             [self finishSession:@"The iPhone is now a Bluetooth speaker"
                         message:@"On your PC, connect to this iPhone and choose it as the audio output.\n\n"
-                                @"This lasts until the next reboot or Bluetooth restart; tap Start again after that."];
+                                @"This lasts until Bluetooth restarts. Turning Bluetooth or Airplane Mode off and on "
+                                @"also removes it; tap Start again after any of these."];
             return;
         }
         if ([summary hasPrefix:@"Failed"] || [summary hasPrefix:@"Refused"]) {
@@ -312,30 +331,14 @@ static UIControl *BTPSFindControl(UIView *view)
             return;
         }
     }
-    // The tweak reports this exact status when it armed the switches but could not spawn launchctl (sandbox).
-    // Bluetooth is still up and the switches are set, so the fix is a manual toggle, NOT a reinstall.
-    if (mine && [session containsString:@"auto-restart unavailable"]) {
-        [self finishSession:@"Almost there - restart Bluetooth"
-                    message:@"The speaker experiment is armed, but this build could not restart Bluetooth for you "
-                            @"on your device. Turn Bluetooth off and on in Settings (or Airplane Mode off/on), then "
-                            @"come back: the experiment runs on the next Bluetooth start. Nothing was broken."];
-        return;
-    }
     if (elapsed > (self.pendingRelaunched ? 45.0 : 25.0)) {
-        NSString *message;
-        if (self.pendingRelaunched) {
-            message = @"Bluetooth restarted and the trial is armed, but the speaker registration has not been "
-                      @"reported yet. Check the Session row in a few seconds, or open the debug log.";
-        } else if ([[BTPSLogReader shared] loadedSummary] && ![[[BTPSLogReader shared] loadedSummary] hasPrefix:@"No"]) {
-            // The tweak IS loaded (it wrote status), so it is not a packaging problem: the restart likely did not
-            // fire. Bluetooth may already be restarting, or may need a manual toggle. Do not advise reinstalling.
-            message = @"The experiment is armed, but Bluetooth has not confirmed the restart yet. If it does not "
-                      @"reconnect shortly, turn Bluetooth off and on (or Airplane Mode off/on). The manual switches "
-                      @"below also work. Nothing was broken.";
-        } else {
-            message = @"No answer from the tweak inside Bluetooth. Check \"Loaded in daemon\" above. If it is not "
-                      @"loaded, reinstall the package; the manual switches below still work.";
-        }
+        // Never suggest turning Bluetooth off and on: that does NOT restart bluetoothd, and it removes a running
+        // speaker endpoint until the next restart.
+        NSString *message = self.pendingRelaunched
+            ? @"Bluetooth restarted and the trial is armed, but the speaker registration has not been reported yet. "
+              @"Make sure Bluetooth is turned on, then check the Session row in a few seconds or open the debug log."
+            : @"Bluetooth did not report a restart. If devices do not reconnect within a minute, restart the Bluetooth "
+              @"daemon from the PC with your usual sudo killall -9 bluetoothd command, then try Start again.";
         [self finishSession:@"Still waiting" message:message];
         return;
     }

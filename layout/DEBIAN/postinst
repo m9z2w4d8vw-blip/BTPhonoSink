@@ -13,5 +13,11 @@ if [ "$1" = configure ]; then
         echo 'BTPhonoSink: helper bootstrap failed; inspect launchctl before arming v8.8.' >&2
         exit 1
     }
+    # Load the newly installed tweak into bluetoothd now. Installing a package does not restart running daemons:
+    # without this, bluetoothd keeps the previous build until its next restart while the Settings page (loaded
+    # fresh) already shows the new features, so e.g. Start gets no answer. killall -9 is the same restart the
+    # project has always used; launchd relaunches bluetoothd within seconds. It must never fail the install.
+    echo 'BTPhonoSink: restarting bluetoothd to load the new version; Bluetooth devices reconnect in a few seconds.'
+    killall -9 bluetoothd >/dev/null 2>&1 || launchctl kickstart -k system/com.apple.bluetoothd >/dev/null 2>&1 || true
 fi
 exit 0

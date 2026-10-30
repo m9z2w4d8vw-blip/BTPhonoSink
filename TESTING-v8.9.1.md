@@ -1,3 +1,10 @@
+> **Superseded by [TESTING-v8.9.2.md](TESTING-v8.9.2.md). The diagnosis below was wrong.** The 20:43 log
+> showed the same bluetoothd (pid 10073) running since 19:02 with the pre-v8.9 tweak: the Start listener was
+> never loaded, so v8.9.0's restart never ran and could not have left Bluetooth down. bluetoothd also runs as
+> mobile, so the `launchctl kickstart system/...` added here would be refused. Toggling Bluetooth, suggested
+> here, does not restart bluetoothd and removes a running Sink. v8.9.2 reverts the restart, makes the package
+> restart bluetoothd at install, and reports when a Bluetooth toggle drops the Sink.
+
 # v8.9.1: fix the Start button leaving Bluetooth down
 
 This is a source patch on top of v8.9. It fixes one serious bug in the v8.9.0 Start button and nothing
