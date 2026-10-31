@@ -1,12 +1,16 @@
 /* Live SBC is decoded and played only in this auxiliary process.
  * v8.9: the output follows Settings > Speaka > Audio output - the built-in speaker (default), headphones
- * only, or any device iOS is using - minus a user-maintained never-play list. Policy: BTPSV89Output.h. */
+ * only, or any device iOS is using - minus a user-maintained never-play list. Policy: BTPSV89Output.h.
+ * v9.1: a running output is kept through stream changes, and the helper never re-activates its audio session faster
+ * than BTPS_V91_REARM_MS on its own. Every session change re-routes iOS, which made bluetoothd START or SUSPEND the
+ * PC's stream, which the helper answered with another session change (the 23:33 loop). Policy: BTPSV91Hold.h. */
 #import <Foundation/Foundation.h>
 #import <AVFoundation/AVFoundation.h>
 #import <AudioToolbox/AudioToolbox.h>
 #include "BTPSV88Stream.h"
 #include "BTPSV88Decode.h"
 #include "BTPSV89Output.h"
+#include "BTPSV91Hold.h"
 #include "BTPSShared.h"
 #include <dlfcn.h>
 #include <errno.h>
@@ -30,6 +34,11 @@ static int g_output_mode=BTPS_V89_MODE_SPEAKER;
 static NSArray<NSDictionary *> *g_never_outputs;
 static int g_output_notify=-1;
 static void publish_status(NSString *state,NSString *reason,BOOL force);
+/* v9.1 session bookkeeping, stream thread only: whether the helper's AVAudioSession is active, and when the helper
+ * itself last activated or deactivated it. A route change that arrives right after that is the helper's own echo. */
+static int g_session_active;
+static uint64_t g_session_changed_ms;
+static uint64_t helper_ms(void);
 /* v8.9.3: every helper line gets the same HH:MM:SS.mmm prefix as the daemon log, so the two can be read side by
  * side (the Settings export now shows both). Defined above PCM_CAPACITY: the render callback below never logs. */
 static void hlog(FILE *stream,const char *fmt,...) __attribute__((format(printf,2,3)));
@@ -40,6 +49,12 @@ static void hlog(FILE *stream,const char *fmt,...) {
     fprintf(stream,"%02d:%02d:%02d.%03ld ",tm.tm_hour,tm.tm_min,tm.tm_sec,(long)(ts.tv_nsec/1000000L));
     va_list ap;va_start(ap,fmt);vfprintf(stream,fmt,ap);va_end(ap);
     fflush(stream);
+}
+/* v9.1: every activation and deactivation is logged with its time, so the helper log lines up with the phone's own
+ * START/SUSPEND lines (V882_CONTROL ... by=phone) in the daemon log. */
+static void note_session(int active,const char *why) {
+    g_session_active=active;g_session_changed_ms=helper_ms();
+    hlog(stdout,"V91_SESSION active=%d why=%s mode=%s\n",active,why,btps_v89_mode_name(g_output_mode));
 }
 
 #define PCM_CAPACITY 16384u /* stereo frames, <= 372ms; discard oldest on overflow */
@@ -88,22 +103,32 @@ static void render(void *context,AudioQueueRef queue,AudioQueueBufferRef buffer)
         __atomic_fetch_add(&o->silence_frames,AUDIO_FRAMES-take,__ATOMIC_RELAXED);
     }
 }
-static void stop_output(Output *o,BTPSV88Shared *s,const char *reason) {
+static void stop_output(Output *o,BTPSV88Shared *s,const char *reason,int release) {
+    /* v9.1: tears down the AudioQueue; the audio session is released only when release is set. A queue that is
+     * rebuilt at once (new sample rate, a re-applied speaker override) keeps its session: every session change
+     * re-routes iOS, and that is what made bluetoothd START and SUSPEND the PC's stream in the 23:33 loop. */
     __atomic_store_n(&o->stopping,1,__ATOMIC_RELEASE);
-    if(!o->queue) return;
-    uint64_t current_generation=__atomic_load_n(&s->generation,__ATOMIC_ACQUIRE);
-    hlog(stdout,"V882_AUDIO_STOP reason=%s generation=%llu active=%u\n",reason,
-        (unsigned long long)(current_generation>>1),(unsigned)(current_generation&1u));fflush(stdout);
-    btps_v88_event(s,1,(BTPSV88Event){BTPS_V882_HEALTH,
-        (uint32_t)current_generation,
-        (uint32_t)__atomic_load_n(&o->render_tick,__ATOMIC_RELAXED),0});
-    AudioQueueStop(o->queue,true);
-    AudioQueueDispose(o->queue,true);o->queue=NULL;o->rate=0;
-    __atomic_store_n(&o->error,0,__ATOMIC_RELAXED);
-    pthread_mutex_lock(&o->lock);o->read=o->count=0;pthread_mutex_unlock(&o->lock);
-    [[AVAudioSession sharedInstance] setActive:NO withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:NULL];
-    btps_v88_event(s,1,(BTPSV88Event){BTPS_V88_AUDIO,0,0,1});
-    publish_status(@"idle",[NSString stringWithUTF8String:reason]?:@"",NO);
+    int had_queue=o->queue!=NULL;
+    if(had_queue) {
+        uint64_t current_generation=__atomic_load_n(&s->generation,__ATOMIC_ACQUIRE);
+        hlog(stdout,"V882_AUDIO_STOP reason=%s generation=%llu active=%u session=%s\n",reason,
+            (unsigned long long)(current_generation>>1),(unsigned)(current_generation&1u),release?"released":"kept");
+        btps_v88_event(s,1,(BTPSV88Event){BTPS_V882_HEALTH,
+            (uint32_t)current_generation,
+            (uint32_t)__atomic_load_n(&o->render_tick,__ATOMIC_RELAXED),0});
+        AudioQueueStop(o->queue,true);
+        AudioQueueDispose(o->queue,true);o->queue=NULL;o->rate=0;
+        __atomic_store_n(&o->error,0,__ATOMIC_RELAXED);
+        pthread_mutex_lock(&o->lock);o->read=o->count=0;pthread_mutex_unlock(&o->lock);
+        btps_v88_event(s,1,(BTPSV88Event){BTPS_V88_AUDIO,0,0,1});
+    }
+    if(!release) return;
+    int had_session=g_session_active;
+    if(had_session) {
+        [[AVAudioSession sharedInstance] setActive:NO withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:NULL];
+        note_session(0,reason);
+    }
+    if(had_queue || had_session) publish_status(@"idle",[NSString stringWithUTF8String:reason]?:@"",NO);
 }
 static int speaker_selected(AVAudioSession *session) {
     NSArray<AVAudioSessionPortDescription *> *ports=session.currentRoute.outputs;
@@ -189,6 +214,9 @@ static void publish_status(NSString *state,NSString *reason,BOOL force) {
 static void log_route(AVAudioSession *session,const char *stage,unsigned rate,BTPSV88Shared *s) {
     NSString *device=nil;
     int verdict=route_verdict(session,&device);
+    if(!strcmp(stage,"configured")) /* v9.1: the category actually in effect, next to the route it produced */
+        hlog(stdout,"V91_SESSION_CONFIG category=%s options=0x%lx mode=%s\n",session.category.UTF8String?:"-",
+             (unsigned long)session.categoryOptions,session.mode.UTF8String?:"-");
     btps_v88_event(s,1,(BTPSV88Event){BTPS_V881_ROUTE,
         (uint32_t)(session.outputVolume*100.0f+0.5f),rate,verdict?-102:0});
     for(AVAudioSessionPortDescription *port in session.currentRoute.outputs)
@@ -225,7 +253,7 @@ static int configure_speaker(unsigned rate,BTPSV88Shared *s) {
     BOOL ok=[session setCategory:AVAudioSessionCategoryPlayAndRecord
                            mode:AVAudioSessionModeDefault
                         options:AVAudioSessionCategoryOptionDefaultToSpeaker error:&error];
-    if(ok) {stage="activate";ok=[session setActive:YES error:&error];}
+    if(ok) {stage="activate";ok=[session setActive:YES error:&error];if(ok) note_session(1,"speaker");}
     if(ok) {stage="speaker_override";ok=[session overrideOutputAudioPort:AVAudioSessionPortOverrideSpeaker error:&error];}
     if(!ok) {
         hlog(stderr,"V881_AUDIO_FAIL stage=%s domain=%s code=%ld error=%s\n",stage,
@@ -256,7 +284,7 @@ static int configure_external(unsigned rate,BTPSV88Shared *s) {
     if(ok) {
         int verdict=route_verdict(session,&device);
         if(verdict) {note_refusal(session,"candidate",rate,s,verdict,device);return -2;}
-        stage="activate";ok=[session setActive:YES error:&error];
+        stage="activate";ok=[session setActive:YES error:&error];if(ok) note_session(1,"any");
     }
     if(!ok) {
         hlog(stderr,"V889_AUDIO_FAIL stage=%s domain=%s code=%ld error=%s\n",stage,
@@ -302,7 +330,7 @@ static int configure_wired(unsigned rate,BTPSV88Shared *s) {
          * this category cannot reach - so activate (safe: no Bluetooth is possible) and verify the real route below. */
         int verdict=route_verdict(session,&device);
         if(verdict && builtin_only(session)) {note_refusal(session,"candidate",rate,s,verdict,device);return -2;}
-        stage="activate";ok=[session setActive:YES error:&error];
+        stage="activate";ok=[session setActive:YES error:&error];if(ok) note_session(1,"wired");
     }
     if(!ok) {
         hlog(stderr,"V894_AUDIO_FAIL stage=%s domain=%s code=%ld error=%s\n",stage,
@@ -327,8 +355,18 @@ static int configure_output(unsigned rate,BTPSV88Shared *s) {
 }
 static int start_output(Output *o,unsigned rate,BTPSV88Shared *s) {
     AVAudioSession *session=[AVAudioSession sharedInstance];
-    int configured=configure_output(rate,s);
-    if(configured) return configured;
+    /* v9.1: a session that is still active on an acceptable route (a new sample rate, a re-applied speaker override)
+     * is reused as it is; configuring it again would re-route iOS. Anything else is released and configured afresh. */
+    int reuse=g_session_active && !route_verdict(session,NULL);
+    if(g_session_active && !reuse) {
+        [session setActive:NO withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:NULL];
+        note_session(0,"not_reusable");
+    }
+    int configured=reuse?0:configure_output(rate,s);
+    if(configured) {
+        if(g_session_active) note_session(0,"configure_refused"); /* every configure_* failure deactivates */
+        return configured;
+    }
     __atomic_store_n(&o->stopping,1,__ATOMIC_RELEASE);
     __atomic_store_n(&o->error,0,__ATOMIC_RELAXED);
     AudioStreamBasicDescription format={0};
@@ -351,11 +389,24 @@ static int start_output(Output *o,unsigned rate,BTPSV88Shared *s) {
         e=AudioQueueStart(o->queue,NULL);
     }
     btps_v88_event(s,1,(BTPSV88Event){BTPS_V88_AUDIO,0,rate,e});
-    if(e) {stop_output(o,s,"start_error");[session setActive:NO error:NULL];return -1;}
+    if(e) {stop_output(o,s,"start_error",1);return -1;}
     o->rate=rate;g_last_refusal=-1;
     log_route(session,"started",rate,s);
     publish_status(@"playing",@"",YES);
     return 0;
+}
+/* v9.1, speaker mode: a route change took the playing output off the speaker. iOS drops a speaker override whenever
+ * the route changes (with wired earbuds plugged in, the earbuds take over), so the override is applied again on the
+ * live session instead of deactivating it: deactivating re-routes iOS, which is what fed the 23:33 loop. The queue
+ * stops first, so nothing plays on the wrong output meanwhile. Returns 0 when it plays on the speaker again. */
+static int reassert_speaker(Output *o,unsigned rate,BTPSV88Shared *s) {
+    AVAudioSession *session=[AVAudioSession sharedInstance];NSError *error=nil;
+    stop_output(o,s,"route_changed_reassert",0);
+    BOOL ok=g_session_active && [session overrideOutputAudioPort:AVAudioSessionPortOverrideSpeaker error:&error];
+    for(unsigned i=0;ok && i<20 && !speaker_selected(session);i++) usleep(10000);
+    int selected=ok && speaker_selected(session);
+    hlog(stdout,"V91_SPEAKER_REASSERT ok=%d selected=%d code=%ld\n",(int)ok,selected,(long)error.code);
+    return selected?start_output(o,rate,s):-1;
 }
 typedef struct { uint32_t samples,nonzero,peak; } PCMLevels;
 static void measure_pcm(PCMLevels *level,const int16_t *pcm,unsigned frames) {
@@ -366,7 +417,7 @@ static void measure_pcm(PCMLevels *level,const int16_t *pcm,unsigned frames) {
         if(magnitude>level->peak) level->peak=magnitude;
     }
 }
-static void report_progress(Output *o,PCMLevels *level,BTPSV88Shared *s) {
+static void report_progress(Output *o,PCMLevels *level,BTPSV88Shared *s,uint64_t generation) {
     uint64_t callbacks=__atomic_exchange_n(&o->render_callbacks,0,__ATOMIC_RELAXED);
     uint64_t submitted=__atomic_exchange_n(&o->submitted_frames,0,__ATOMIC_RELAXED);
     uint64_t nonzero=__atomic_exchange_n(&o->submitted_nonzero,0,__ATOMIC_RELAXED);
@@ -381,7 +432,8 @@ static void report_progress(Output *o,PCMLevels *level,BTPSV88Shared *s) {
         (unsigned long long)silence,queued,(unsigned long long)o->dropped,(unsigned)running,(int)status,route_ok,
         btps_v89_mode_name(g_output_mode));
     fflush(stdout);
-    if(o->queue) publish_status(route_ok?@"playing":@"waiting",route_ok?@"":@"output route changed",NO);
+    /* v9.1: a kept output in a stream gap stays "idle" (PC paused) instead of flipping back to "playing". */
+    if(o->queue && (generation&1u)) publish_status(route_ok?@"playing":@"waiting",route_ok?@"":@"output route changed",NO);
     btps_v88_event(s,1,(BTPSV88Event){BTPS_V881_PCM,level->peak,level->samples,(int32_t)level->nonzero});
     btps_v88_event(s,1,(BTPSV88Event){BTPS_V881_RENDER,(uint32_t)silence,(uint32_t)submitted,(int32_t)callbacks});
     *level=(PCMLevels){0};
@@ -397,6 +449,13 @@ static void write_pcm(Output *o,const int16_t *pcm,unsigned frames) {
         o->pcm[slot*2]=pcm[i*2];o->pcm[slot*2+1]=pcm[i*2+1];
     }
     o->count+=frames;pthread_mutex_unlock(&o->lock);
+}
+/* v9.1: the stream changed (the PC or the phone started, suspended, closed or reconfigured it) while the output was
+ * running. Keep the queue and the session; drop only the PCM queued for the old stream. */
+static void keep_output(Output *o,uint64_t generation) {
+    pthread_mutex_lock(&o->lock);o->read=o->count=0;pthread_mutex_unlock(&o->lock);
+    hlog(stdout,"V91_STREAM_CHANGE generation=%llu active=%u output=kept\n",(unsigned long long)(generation>>1),
+         (unsigned)(generation&1u));
 }
 static void report_health(Output *o,BTPSV88Shared *s,uint64_t generation) {
     UInt32 running=0,size=sizeof running;
@@ -459,9 +518,11 @@ static void stream(int fd) {
     BTPSV88Decoder decoder;btps_v88_decoder_reset(&decoder);
     BTPSV88Packet packet;int16_t pcm[BTPS_V88_PCM_SAMPLES];
     uint64_t generation=0,doorbell=UINT64_MAX;
-    unsigned idle=0,retry=0,diagnostic_ticks=0;BOOL interrupted=NO;
+    unsigned retry=0,diagnostic_ticks=0;BOOL interrupted=NO;
+    btps_v91_hold hold={0};int last_deferral=-1;  /* v9.1 keep/rearm policy, BTPSV91Hold.h */
     PCMLevels level={0};
     __block int interruption=0,route_changed=0;__block long interruption_reason=-1;
+    __block long route_reason=-1;__block int route_device=0,media_reset=0;
     id observer=[[NSNotificationCenter defaultCenter] addObserverForName:AVAudioSessionInterruptionNotification
         object:nil queue:nil usingBlock:^(NSNotification *note) {
             unsigned type=[note.userInfo[AVAudioSessionInterruptionTypeKey] unsignedIntValue];
@@ -472,52 +533,98 @@ static void stream(int fd) {
         }];
     id route_observer=[[NSNotificationCenter defaultCenter] addObserverForName:AVAudioSessionRouteChangeNotification
         object:nil queue:nil usingBlock:^(NSNotification *note) {
-            (void)note;__atomic_store_n(&route_changed,1,__ATOMIC_RELEASE);
+            /* v9.1: keep the reason; a real device arrival or removal is remembered until the loop reads it. */
+            id value=note.userInfo[AVAudioSessionRouteChangeReasonKey];
+            long reason=[value isKindOfClass:[NSNumber class]]?[value longValue]:-1L;
+            __atomic_store_n(&route_reason,reason,__ATOMIC_RELAXED);
+            if(btps_v91_route_is_device_change(reason)) __atomic_store_n(&route_device,1,__ATOMIC_RELAXED);
+            __atomic_store_n(&route_changed,1,__ATOMIC_RELEASE);
+        }];
+    /* v9.1: after a media-services reset the old session and queue are gone; start again from nothing. */
+    id reset_observer=[[NSNotificationCenter defaultCenter] addObserverForName:AVAudioSessionMediaServicesWereResetNotification
+        object:nil queue:nil usingBlock:^(NSNotification *note) {
+            (void)note;__atomic_store_n(&media_reset,1,__ATOMIC_RELEASE);
         }];
     for(;;) {
         @autoreleasepool {
             uint8_t byte;ssize_t n=recv(fd,&byte,1,MSG_PEEK);
             if(n==0 || (n<0 && errno!=EAGAIN && errno!=EWOULDBLOCK && errno!=EINTR)) break;
             __atomic_fetch_add(&s->helper_heartbeat,1,__ATOMIC_RELEASE);
+            uint64_t now=helper_ms();
+            /* Every path below keeps hold.running equal to "a queue is running"; this only guards against a miss. */
+            if(!o->queue && hold.running) btps_v91_released(&hold,now,BTPS_V91_RELEASE_AUTOMATIC);
+            else if(o->queue && !hold.running) btps_v91_started(&hold,now);
+            if(__atomic_exchange_n(&media_reset,0,__ATOMIC_ACQUIRE)) {
+                hlog(stdout,"V91_MEDIA_SERVICES_RESET queue=%d session=%d\n",o->queue!=NULL,g_session_active);
+                stop_output(o,s,"media_services_reset",1);btps_v88_decoder_reset(&decoder);
+                btps_v91_released(&hold,now,BTPS_V91_RELEASE_REQUESTED);retry=0;
+            }
             int changed=__atomic_exchange_n(&interruption,0,__ATOMIC_ACQUIRE);
             if(changed) {
                 interrupted=changed==1;
                 hlog(stdout,"V882_INTERRUPTION type=%s reason=%ld\n",interrupted?"began":"ended",
                      __atomic_load_n(&interruption_reason,__ATOMIC_RELAXED));fflush(stdout);
-                stop_output(o,s,interrupted?"interruption_began":"interruption_ended");btps_v88_decoder_reset(&decoder);
+                stop_output(o,s,interrupted?"interruption_began":"interruption_ended",1);btps_v88_decoder_reset(&decoder);
+                btps_v91_released(&hold,now,BTPS_V91_RELEASE_REQUESTED);
             }
             int settings_changed=0;
             if(g_output_notify>=0 && notify_check(g_output_notify,&settings_changed)==NOTIFY_STATUS_OK && settings_changed) {
                 load_output_settings();g_last_refusal=-1;
-                if(o->queue) {stop_output(o,s,"output_settings_changed");btps_v88_decoder_reset(&decoder);}
+                stop_output(o,s,"output_settings_changed",1);btps_v88_decoder_reset(&decoder);
+                btps_v91_released(&hold,now,BTPS_V91_RELEASE_REQUESTED); /* a user action: no rearm wait */
                 retry=0;
                 if(interrupted) {hlog(stdout,"V894_INTERRUPTION_CLEARED by=settings\n");interrupted=NO;}
             }
             if(__atomic_exchange_n(&route_changed,0,__ATOMIC_ACQUIRE)) {
                 AVAudioSession *session=[AVAudioSession sharedInstance];
+                long reason=__atomic_load_n(&route_reason,__ATOMIC_RELAXED);
+                int device=__atomic_exchange_n(&route_device,0,__ATOMIC_RELAXED);
+                int own=g_session_changed_ms && now>=g_session_changed_ms && now-g_session_changed_ms<1500u;
+                hlog(stdout,"V91_ROUTE_CHANGE reason=%ld(%s) device_change=%d own_echo=%d playing=%d\n",reason,
+                     btps_v91_route_reason_name(reason),device,own,o->queue!=NULL);
                 if(o->queue) {
                     log_route(session,"changed",o->rate,s);
                     if(route_verdict(session,NULL)) {
-                        stop_output(o,s,"route_changed");btps_v88_decoder_reset(&decoder);retry=20;
+                        /* v9.1: speaker mode re-applies its override on the live session before giving up. */
+                        if(g_output_mode==BTPS_V89_MODE_SPEAKER && !reassert_speaker(o,o->rate,s)) {
+                            btps_v91_started(&hold,helper_ms());publish_status(@"playing",@"",YES);
+                        } else {
+                            stop_output(o,s,"route_changed",1);btps_v88_decoder_reset(&decoder);retry=20;
+                            btps_v91_released(&hold,helper_ms(),device?BTPS_V91_RELEASE_REQUESTED:BTPS_V91_RELEASE_AUTOMATIC);
+                        }
                     } else publish_status(@"playing",@"",YES);
-                } else retry=0; /* a device was connected or picked: try it with the next packet */
+                } else if(device || !own) {
+                    /* a device was connected or picked: try it with the next packet. Our own echo is ignored. */
+                    retry=0;
+                    if(device) btps_v91_rearm_now(&hold);
+                }
             }
             uint64_t current=__atomic_load_n(&s->generation,__ATOMIC_ACQUIRE);
             if(current!=generation) {
-                stop_output(o,s,"stream_generation_changed");btps_v88_decoder_reset(&decoder);generation=current;retry=0;
                 /* v8.9.4: iOS does not always send "ended" (e.g. another app keeps playing), and interruptions are now
                  * delivered. A new stream from the PC - pause/play there - is an explicit request for audio, so it
                  * clears the interruption; if it still holds (a call), activation fails and the normal backoff applies. */
                 if(interrupted) {hlog(stdout,"V894_INTERRUPTION_CLEARED by=new_stream\n");interrupted=NO;}
+                /* v9.1: a running output is KEPT (BTPSV91Hold.h). Stopping it here re-routed iOS, which made bluetoothd
+                 * START or SUSPEND the PC's stream, which changed the generation again: every 0.7 s at 23:33. */
+                if(btps_v91_generation_changed(&hold)) keep_output(o,current);
+                btps_v88_decoder_reset(&decoder);generation=current;retry=0;
                 if(!(current&1u)) publish_status(@"idle",@"PC paused or stopped the stream",NO);
+                else if(o->queue) publish_status(@"playing",@"",NO);
             }
             int32_t audio_error=__atomic_exchange_n(&o->error,0,__ATOMIC_RELAXED);
             if(audio_error) {
                 btps_v88_event(s,1,(BTPSV88Event){BTPS_V88_AUDIO,0,o->rate,audio_error});
-                stop_output(o,s,"enqueue_error");retry=100;
+                stop_output(o,s,"enqueue_error",1);retry=100;
+                btps_v91_released(&hold,now,BTPS_V91_RELEASE_AUTOMATIC);
+            }
+            /* v9.1: the output is released only after BTPS_V91_HOLD_MS without media (v9.0: at once, on any change). */
+            if(btps_v91_expired(&hold,now)) {
+                hlog(stdout,"V91_HOLD_EXPIRED no_media_ms=%llu\n",(unsigned long long)(now-hold.media_ms));
+                stop_output(o,s,"media_idle",1);btps_v88_decoder_reset(&decoder);
+                btps_v91_released(&hold,now,BTPS_V91_RELEASE_AUTOMATIC);
             }
             if(retry) retry--;
-            unsigned processed=0;
             uint64_t signal=__atomic_load_n(&s->doorbell,__ATOMIC_ACQUIRE);
             if(signal!=doorbell) {
                 for(unsigned i=0;i<BTPS_V88_SLOTS && btps_v88_dequeue(s,&packet);i++) {
@@ -525,25 +632,45 @@ static void stream(int fd) {
                     unsigned frames=0,samples=0,rate=0;
                     int result=btps_v88_decode(&decoder,&packet,pcm,BTPS_V88_PCM_SAMPLES,&frames,&samples,&rate);
                     btps_v88_event(s,1,(BTPSV88Event){BTPS_V88_DECODE,packet.length,frames,result});
-                    processed++;
                     if(result || !samples) continue;
+                    uint32_t nonzero_before=level.nonzero;
                     measure_pcm(&level,pcm,samples);
+                    int audible=level.nonzero!=nonzero_before;
                     /* Recheck after decoding so a concurrent STOP cannot queue stale PCM. */
                     if(__atomic_load_n(&s->generation,__ATOMIC_ACQUIRE)!=generation) break;
-                    if(o->queue && o->rate!=rate) stop_output(o,s,"sample_rate_changed");
-                    if(!o->queue && !retry) {int started=start_output(o,rate,s);if(started) retry=started==-2?400:100;}
-                    if(o->queue) write_pcm(o,pcm,samples);
+                    if(o->queue && o->rate!=rate) {
+                        /* v9.1: a new sample rate rebuilds only the queue; the session stays active. */
+                        stop_output(o,s,"sample_rate_changed",0);
+                        int restarted=start_output(o,rate,s);
+                        if(restarted) {
+                            stop_output(o,s,"sample_rate_restart_failed",1);retry=restarted==-2?400:100;
+                            btps_v91_released(&hold,helper_ms(),BTPS_V91_RELEASE_AUTOMATIC);
+                        } else btps_v91_started(&hold,helper_ms());
+                    }
+                    if(!o->queue && !retry) {
+                        int verdict=btps_v91_may_start(&hold,helper_ms(),audible);
+                        if(verdict==BTPS_V91_START_OK) {
+                            int started=start_output(o,rate,s);last_deferral=-1;
+                            if(started) {
+                                retry=started==-2?400:100;
+                                btps_v91_released(&hold,helper_ms(),BTPS_V91_RELEASE_AUTOMATIC);
+                            } else btps_v91_started(&hold,helper_ms());
+                        } else if(verdict!=last_deferral) {
+                            hlog(stdout,"V91_START_DEFERRED reason=%s rearm_in_ms=%lld\n",btps_v91_start_reason(verdict),
+                                 hold.rearm_ms>now?(long long)(hold.rearm_ms-now):0ll);
+                            last_deferral=verdict;
+                        }
+                    }
+                    if(o->queue) {write_pcm(o,pcm,samples);btps_v91_media(&hold,helper_ms());}
                 }
                 /* If bounded drain left packets, poll again instead of losing a wakeup. */
                 if(__atomic_load_n(&s->media.read,__ATOMIC_RELAXED)==
                    __atomic_load_n(&s->media.write,__ATOMIC_ACQUIRE)) doorbell=signal;
             }
-            idle=processed?0:idle+1;
-            if(idle==400) {stop_output(o,s,"media_idle");btps_v88_decoder_reset(&decoder);}
             diagnostic_ticks++;
             if(diagnostic_ticks%40u==0) report_health(o,s,generation);
             if(diagnostic_ticks%200u==0 && ((generation&1u) || level.samples))
-                report_progress(o,&level,s);
+                report_progress(o,&level,s,generation);
         }
         /* v8.9.4: this loop runs on the helper's main thread and never ran its run loop, and not one route change or
          * interruption was handled in any session, although earbuds were plugged in during playback. If AVAudioSession
@@ -554,12 +681,13 @@ static void stream(int fd) {
     }
     [[NSNotificationCenter defaultCenter] removeObserver:observer];
     [[NSNotificationCenter defaultCenter] removeObserver:route_observer];
-    stop_output(o,s,"ipc_closed");pthread_mutex_destroy(&o->lock);free(o);
+    [[NSNotificationCenter defaultCenter] removeObserver:reset_observer];
+    stop_output(o,s,"ipc_closed",1);pthread_mutex_destroy(&o->lock);free(o);
     publish_status(@"stopped",@"Bluetooth speaker session ended",YES);
     munmap(s,sizeof *s);close(file);
 }
 int BTPSV88StreamMain(void) {
-    hlog(stdout,"V889_HELPER build=v9.0.0-output-select (v8.8.2 idle guard retained)\n");fflush(stdout);
+    hlog(stdout,"V889_HELPER build=v9.1.0-output-select (v8.8.2 idle guard retained, v9.1 output hold)\n");fflush(stdout);
     int (*activate)(const char *,int **,size_t *)=dlsym(RTLD_DEFAULT,"launch_activate_socket");
     int *fds=NULL;size_t count=0;
     if(!activate || activate("Stream",&fds,&count) || !count) {

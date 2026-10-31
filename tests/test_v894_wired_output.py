@@ -118,7 +118,8 @@ int main(void) {
         self.assertLess(drain, loop.index("usleep(5000);"))
         self.assertGreater(drain, loop.index("for(;;) {"))
         registration = helper.split("__block int interruption=0,route_changed=0;", 1)[1].split("for(;;) {", 1)[0]
-        self.assertEqual(registration.count("queue:nil"), 2)  # handlers run on the posting thread, whichever it is
+        # handlers run on the posting thread, whichever it is. v9.1 adds the third: media services were reset.
+        self.assertEqual(registration.count("queue:nil"), 3)
         self.assertNotIn("dispatch_get_main_queue", helper)   # nothing else is waiting to run on the main thread
 
     def test_an_interruption_cannot_mute_the_helper_for_good(self):

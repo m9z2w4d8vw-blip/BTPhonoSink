@@ -84,7 +84,7 @@
 #define BTPS_BUILD_TAG "v8.8-continuous-sbc-ring"
 /* v8.9 keeps the v8.8 build label, as v8.8.1 and v8.8.2 did; this separate tag identifies the one-tap
  * Start/Stop build in the status block (diag.v89.build) and the log. */
-#define BTPS_V89_BUILD_TAG "v9.0.0-one-tap-output-select"
+#define BTPS_V89_BUILD_TAG "v9.1.0-one-tap-output-select"
 
 /* AVDTP constants, used for native Source registration diagnostics */
 #define BTPS_AVDTP_TSEP_SRC 0u
@@ -340,8 +340,12 @@ static void btps_v88_note_signal(unsigned direction,uint64_t cid,const uint8_t *
     int change=btps_v88_signal(&g_v88_control,direction,cid,p,size);
     if(change>=0) {
         BTPSV88SetActive(change);
-        BTPSLogNow("V882_CONTROL direction=%s CID=%#llx tx=%u msg=%u sig=%u active=%d",
-            direction?"TX":"RX",(unsigned long long)cid,p[0]>>4,p[0]&3u,p[1]&63u,change);
+        /* v9.1: by= names who sent the command this line belongs to. A command (msg=0) is its sender's; a response
+         * answers the other side's command. In the 23:33 loop every START and SUSPEND was by=phone: Apple's own A2DP
+         * code driving the PC's stream as if the iPhone were the source. Logging only; nothing is blocked. */
+        BTPSLogNow("V882_CONTROL direction=%s CID=%#llx tx=%u msg=%u sig=%u active=%d by=%s",
+            direction?"TX":"RX",(unsigned long long)cid,p[0]>>4,p[0]&3u,p[1]&63u,change,
+            ((direction==1u)==((p[0]&3u)==0u))?"phone":"pc");
     }
     pthread_mutex_unlock(&g_v88_control_lock);
 }

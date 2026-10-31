@@ -168,6 +168,7 @@ The speaker lasts as long as that run of Bluetooth. Tap **Start** again after an
 | *Off - Bluetooth was turned off and on; tap Start* | Toggling Bluetooth rebuilt Apple's endpoints without the speaker | Tap **Start**. |
 | The PC connects and drops at once, or finds no speaker | No speaker registered since the last Bluetooth restart | Tap **Start**, then reconnect from the PC. |
 | The PC plays, the iPhone is silent, and the banner shows your PC | *Any device* is sending the sound back to the PC | Choose *iPhone speaker* or *Wired headphones*, or pick your earbuds with **Choose output device...**. |
+| Control Center keeps switching between *Headphones* and your PC, and nothing plays | Builds before v9.1 restarted their audio on every stream change, and each restart re-routed iOS ([TESTING-v9.1](docs/history/TESTING-v9.1.md)) | Update to v9.1. If it still happens, save the log right away. |
 | The banner says the volume is at 0% | That output's volume is at zero | Raise the iPhone volume while audio plays. |
 | Wired mode is silent and the banner says it's waiting | Nothing is plugged in | Plug the headset in; playback starts by itself. |
 | The sound stopped after a call, Siri or another app | iOS interrupted playback | Pause and play on the PC, or change any audio setting. |
@@ -202,7 +203,7 @@ scp mobile@<iphone-ip>:/tmp/FTABHarvest/BTPSAudioHelper-v88.log "$env:USERPROFIL
 
 | Line | Meaning |
 | --- | --- |
-| `diag.v89.build: v9.0.0-one-tap-output-select` | The tweak build running inside `bluetoothd` |
+| `diag.v89.build: v9.1.0-one-tap-output-select` | The tweak build running inside `bluetoothd` |
 | `diag.v89.session: start nonce=... result=ARMED` | Start restarted Bluetooth and armed the speaker |
 | `diag.v82.sep: LOCAL register=0 SEID=7 role=SNK ...` | The speaker endpoint is registered |
 | `V88_CONFIG handle=1 local_seid=7 remote_seid=...` | The PC configured a stream |
@@ -212,9 +213,12 @@ scp mobile@<iphone-ip>:/tmp/FTABHarvest/BTPSAudioHelper-v88.log "$env:USERPROFIL
 | `V882_HEALTH ready=0 ... why=0x20` | Helper health. `0x1` stream inactive, `0x2` no queue, `0x4` queue stopped, `0x8` stopping, `0x10` enqueue error, `0x20` wrong output for the mode |
 | `V882_IDLE_GUARD action=keep` | The guard kept the stream alive instead of iOS's idle suspend |
 | `V82 TX_SIGNAL ... msg=0 sig=9` / `V82 RX_SIGNAL ... msg=0 sig=9` | The phone / the PC paused the stream (`sig=7` start, `sig=8` close) |
+| `V882_CONTROL ... by=phone` / `by=pc` | Who started or suspended the stream. `by=phone` is Apple's own code treating the PC as an output |
 | Helper `V889_AUDIO_ROUTE stage=... mode=... type=... name=...` | Exactly where the audio went |
 | Helper `V882_AUDIO_STOP reason=...` | Why the helper stopped playing |
 | Helper `V882_INTERRUPTION type=began reason=...` | iOS interrupted playback |
+| Helper `V91_SESSION active=... why=...` | The helper's audio session changed. Expect one per playback, not one per second |
+| Helper `V91_STREAM_CHANGE ... output=kept` / `V91_START_DEFERRED reason=...` | A stream change that kept playing / why playback is waiting |
 
 Offline helpers in `tools/`:
 
@@ -312,7 +316,9 @@ The route policy is plain C in `BTPSV89Output.h`, tested directly. The helper al
 - services its run loop, so route changes and interruptions arrive;
 - clears an interruption when a new stream starts;
 - reports its health every ~0.2 s;
-- publishes its status for the app and Settings.
+- publishes its status for the app and Settings;
+- keeps its output through stream changes, lets go only after 8 s without audio, and never re-activates its session
+  faster than every 3 s (v9.1, `btpsaudiohelper/BTPSV91Hold.h`).
 
 **Shared names.** Everything below lives in `BTPSShared.h`, so the tweak, the helper, Settings and the app always
 agree.
@@ -437,6 +443,8 @@ Three design choices limit what can go wrong:
 - **Playback is controlled from the PC.** There are no media controls on the iPhone.
 - **Bluetooth earbuds are less tested.** iOS may switch the sound back to the PC when it reconnects, and receiving
   and sending audio at the same time hasn't been tested on a device.
+- **iOS lists the PC as an output.** That comes from bluetoothd and is not fixed. If the phone suspends the stream
+  as playback starts, the sound begins once Windows reopens the stream, about 6 s later.
 - **Inactive legacy code** (the first design's in-daemon decoder and the v7 self-tests) is still compiled into the
   tweak.
 
@@ -480,6 +488,7 @@ notes.
 | v8.9.3 | Logs that cover the whole session and show where the audio went | [TESTING-v8.9.3](docs/history/TESTING-v8.9.3.md) |
 | v8.9.4 | Wired earbuds without replugging; switching outputs without reconnecting | [TESTING-v8.9.4](docs/history/TESTING-v8.9.4.md) |
 | v9.0 | **Renamed to Speaka** throughout: package `com.parv.speaka` and new internal names | [TESTING-v9.0](docs/history/TESTING-v9.0.md) |
+| v9.1 | No more Headphones / PC flicker: the helper keeps its output through stream changes | [TESTING-v9.1](docs/history/TESTING-v9.1.md) |
 
 | Research note | Topic |
 | --- | --- |
